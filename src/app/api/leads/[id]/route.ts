@@ -4,6 +4,7 @@ import { isValidObjectId } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { Lead } from "@/models/Lead";
 import { requireSameOrigin, requireSession } from "@/lib/api-security";
+import { sendVisitThankYou } from "@/lib/email";
 
 const updateSchema = z.object({
   name: z.string().trim().min(2).max(120).optional(), phone: z.string().trim().min(7).max(24).optional(),
@@ -26,12 +27,22 @@ export async function PATCH(request:NextRequest,{params}:{params:Promise<{id:str
     if(forbidden)return NextResponse.json({error:"Receptionists can only manage visits and activity notes"},{status:403});
   }
   try {
-    await connectMongo(); const {activity,...fields}=parsed.data; const setFields:Record<string,unknown>={...fields};
+    await connectMongo(); const existing=await Lead.findById(id).select("inOffice name email").lean() as null|{inOffice?:boolean;name?:string;email?:string};
+    if(!existing)return NextResponse.json({error:"Lead not found"},{status:404});
+    const {activity,...fields}=parsed.data; const setFields:Record<string,unknown>={...fields};
     if(fields.phone)setFields.phone=fields.phone.replace(/[\s()-]/g,""); if(fields.email!==undefined)setFields.email=fields.email.toLowerCase()||undefined;
     if(fields.inOffice!==undefined)setFields.checkedInAt=fields.inOffice?new Date():null;
     const update:Record<string,unknown>={$set:setFields};
     if(activity)update.$push={activities:{...activity,authorId:session.userId,authorName:session.name,occurredAt:new Date()}};
     const lead=await Lead.findByIdAndUpdate(id,update,{new:true,runValidators:true}).lean();
-    if(!lead)return NextResponse.json({error:"Lead not found"},{status:404}); return NextResponse.json({lead});
+    if(!lead)return NextResponse.json({error:"Lead not found"},{status:404});
+    let emailStatus:"not_requested"|"skipped"|"sent"|"failed"="not_requested";
+    if(existing.inOffice===true&&fields.inOffice===false) {
+      try {
+        const result=await sendVisitThankYou({name:String(existing.name),email:String(existing.email||"")}); emailStatus=result.status;
+        if(result.status==="sent")await Lead.updateOne({_id:id},{$push:{activities:{type:"note",text:"Thank-you email sent after office checkout",authorId:session.userId,authorName:session.name,occurredAt:new Date()}}});
+      } catch {emailStatus="failed";console.warn("Visit thank-you email could not be sent");}
+    }
+    return NextResponse.json({lead,emailStatus});
   } catch(error) { if((error as {code?:number}).code===11000)return NextResponse.json({error:"Phone or email is already in use"},{status:409}); return NextResponse.json({error:"Could not update lead"},{status:500}); }
 }
