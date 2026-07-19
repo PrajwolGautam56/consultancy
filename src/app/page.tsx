@@ -20,6 +20,7 @@ const nav = [
   ["Dashboard", LayoutDashboard], ["Leads & students", Users], ["Office visitors", UserCheck],
   ["Follow-ups", CalendarClock], ["Team", CircleUserRound], ["Settings", Settings],
 ] as const;
+type CurrentUser={userId:string;name:string;email:string;role:"super_admin"|"admin"|"manager"|"counsellor"|"receptionist"};
 
 const stageStyle: Record<Stage, string> = {
   "New inquiry": "blue", Contacted: "violet", Counselling: "amber", Application: "cyan", Enrolled: "green", Lost: "slate",
@@ -47,9 +48,11 @@ export default function Home() {
   const [counsellorFilter,setCounsellorFilter]=useState("All counsellors");
   const [notificationsOpen,setNotificationsOpen]=useState(false);
   const [staffCounsellors,setStaffCounsellors]=useState<string[]>([]);
+  const [currentUser,setCurrentUser]=useState<CurrentUser|null>(null);
   const searchRef=useRef<HTMLInputElement>(null);
 
   useEffect(()=>{ fetch("/api/leads").then(async response=>{ if(response.status===401){window.location.href="/login";return;} const data=await response.json(); if(!response.ok)throw new Error(data.error||"Could not load contacts"); setLeads((data.leads||[]).map(mapLead)); }).catch(error=>setAppError(error.message)).finally(()=>setLoading(false)); },[]);
+  useEffect(()=>{fetch("/api/auth/me").then(async response=>{if(!response.ok)throw new Error();const data=await response.json();setCurrentUser(data.user)}).catch(()=>{window.location.href="/login"})},[]);
   useEffect(()=>{fetch("/api/users?directory=1").then(async response=>response.ok?response.json():{users:[]}).then(data=>setStaffCounsellors((data.users||[]).filter((user:TeamMember)=>user.active&&["super_admin","admin","manager","counsellor"].includes(user.role)).map((user:TeamMember)=>user.name))).catch(()=>setStaffCounsellors([]))},[]);
 
   const filtered = useMemo(() => leads.filter(l => `${l.name} ${l.phone} ${l.email} ${l.country} ${l.course}`.toLowerCase().includes(query.toLowerCase()) && (stageFilter==="All stages"||l.stage===stageFilter) && (counsellorFilter==="All counsellors"||l.counsellor===counsellorFilter)), [leads, query,stageFilter,counsellorFilter]);
@@ -87,9 +90,9 @@ export default function Home() {
     <main className="app-shell">
       <aside className={`sidebar ${mobileNav ? "open" : ""}`}>
         <div className="brand"><span className="brandmark">A</span><span>Admitly<small>CONSULTANCY CRM</small></span><button className="mobile-close" onClick={() => setMobileNav(false)}><X /></button></div>
-        <nav>{nav.map(([label, Icon]) => <button key={label} className={active === label ? "active" : ""} onClick={() => { setActive(label); setMobileNav(false); }}><Icon size={19}/><span>{label}</span>{label === "Follow-ups" && leads.filter(l=>l.nextFollowUpISO).length>0 && <b>{leads.filter(l=>l.nextFollowUpISO).length}</b>}</button>)}</nav>
+        <nav>{nav.filter(([label])=>label!=="Team"||["super_admin","admin","manager"].includes(currentUser?.role||"")).map(([label, Icon]) => <button key={label} className={active === label ? "active" : ""} onClick={() => { setActive(label); setMobileNav(false); }}><Icon size={19}/><span>{label}</span>{label === "Follow-ups" && leads.filter(l=>l.nextFollowUpISO).length>0 && <b>{leads.filter(l=>l.nextFollowUpISO).length}</b>}</button>)}</nav>
         <div className="sidebar-card"><Sparkles size={19}/><strong>CRM is protected</strong><p>Student records require an authenticated staff session.</p><div><i style={{width:"100%"}} /></div></div>
-        <div className="user-card"><Avatar name="Prajwol Gautam" warm/><span><strong>Prajwol Gautam</strong><small>Super administrator</small></span><button className="logout-btn" onClick={logout} title="Sign out"><LogOut size={16}/></button></div>
+        <div className="user-card"><Avatar name={currentUser?.name||"Staff User"} warm/><span><strong>{currentUser?.name||"Loading…"}</strong><small>{currentUser?roleLabel[currentUser.role]:"Checking session…"}</small></span><button className="logout-btn" onClick={logout} title="Sign out"><LogOut size={16}/></button></div>
       </aside>
 
       <section className="workspace">
