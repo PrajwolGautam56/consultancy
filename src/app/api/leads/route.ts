@@ -10,6 +10,7 @@ const createLead = z.object({
   address: z.string().trim().max(300).optional(), education: z.string().trim().max(300).optional(),
   country: z.string().trim().max(100).optional(), course: z.string().trim().max(200).optional(),
   university: z.string().trim().max(200).optional(),
+  tags: z.string().trim().max(500).optional(),
   source: z.enum(["Facebook", "Instagram", "Phone call", "Walk-in", "Referral", "Website", "Other"]).default("Other"),
 });
 
@@ -32,9 +33,10 @@ export async function POST(request: NextRequest) {
     const parsed = createLead.safeParse(await request.json());
     if (!parsed.success) return NextResponse.json({ error: "Invalid lead details", fields: parsed.error.flatten().fieldErrors }, { status: 400 });
     await connectMongo(); const phone = parsed.data.phone.replace(/[\s()-]/g, ""); const email = parsed.data.email?.toLowerCase() || undefined;
+    const tags=Array.from(new Set((parsed.data.tags||"").split(",").map(tag=>tag.trim()).filter(Boolean))).slice(0,20);
     const duplicate = await Lead.exists({ $or: [{ phone }, ...(email ? [{ email }] : [])] });
     if (duplicate) return NextResponse.json({ error: "A contact with this phone or email already exists" }, { status: 409 });
-    const lead = await Lead.create({ ...parsed.data, phone, email, createdBy: session.userId, activities: [{ type: "note", text: "Lead profile created", authorId: session.userId, authorName: session.name }] });
+    const lead = await Lead.create({ ...parsed.data, tags, phone, email, createdBy: session.userId, activities: [{ type: "note", text: "Lead profile created", authorId: session.userId, authorName: session.name }] });
     return NextResponse.json({ lead }, { status: 201 });
   } catch (error) {
     if ((error as {code?:number}).code === 11000) return NextResponse.json({ error: "A contact with this phone or email already exists" }, { status: 409 });

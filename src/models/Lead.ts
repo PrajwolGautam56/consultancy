@@ -17,6 +17,7 @@ const leadSchema = new Schema({
   country: { type: String, trim: true, maxlength: 100 },
   course: { type: String, trim: true, maxlength: 200 },
   university: { type: String, trim: true, maxlength: 200 },
+  tags: [{ type: String, trim: true, maxlength: 40 }],
   source: { type: String, enum: ["Facebook", "Instagram", "Phone call", "Walk-in", "Referral", "Website", "Other"], default: "Other" },
   stage: { type: String, enum: ["New inquiry", "Contacted", "Counselling", "Application", "Enrolled", "Lost"], default: "New inquiry", index: true },
   priority: { type: String, enum: ["Low", "Medium", "High"], default: "Medium" },
@@ -32,4 +33,5 @@ const leadSchema = new Schema({
 }, { timestamps: true, optimisticConcurrency: true });
 
 leadSchema.index({ name: "text", phone: "text", email: "text", country: "text", course: "text" });
+leadSchema.index({ tags: 1 });
 export const Lead = models.Lead || model("Lead", leadSchema);

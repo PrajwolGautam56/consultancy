@@ -13,6 +13,7 @@ const updateSchema = z.object({
   source: z.enum(["Facebook", "Instagram", "Phone call", "Walk-in", "Referral", "Website", "Other"]).optional(),
   stage: z.enum(["New inquiry", "Contacted", "Counselling", "Application", "Enrolled", "Lost"]).optional(),
   priority: z.enum(["Low", "Medium", "High"]).optional(), counsellor: z.string().trim().max(120).optional(),
+  tags: z.array(z.string().trim().min(1).max(40)).max(20).optional(),
   inOffice: z.boolean().optional(), nextFollowUp: z.union([z.string().datetime(), z.null()]).optional(),
   activity: z.object({ type: z.enum(["note", "call", "visit", "stage", "follow_up", "assignment"]), text: z.string().trim().min(1).max(2000) }).optional(),
 }).strict();
@@ -23,13 +24,14 @@ export async function PATCH(request:NextRequest,{params}:{params:Promise<{id:str
   const {id}=await params; if(!isValidObjectId(id))return NextResponse.json({error:"Invalid lead id"},{status:400});
   const parsed=updateSchema.safeParse(await request.json()); if(!parsed.success)return NextResponse.json({error:"Invalid update",fields:parsed.error.flatten().fieldErrors},{status:400});
   if(session.role==="receptionist") {
-    const allowed=new Set(["inOffice","activity"]); const forbidden=Object.keys(parsed.data).some(key=>!allowed.has(key));
+    const allowed=new Set(["inOffice","activity","tags"]); const forbidden=Object.keys(parsed.data).some(key=>!allowed.has(key));
     if(forbidden)return NextResponse.json({error:"Receptionists can only manage visits and activity notes"},{status:403});
   }
   try {
     await connectMongo(); const existing=await Lead.findById(id).select("inOffice name email").lean() as null|{inOffice?:boolean;name?:string;email?:string};
     if(!existing)return NextResponse.json({error:"Lead not found"},{status:404});
     const {activity,...fields}=parsed.data; const setFields:Record<string,unknown>={...fields};
+    if(fields.tags)setFields.tags=Array.from(new Set(fields.tags.map(tag=>tag.trim()).filter(Boolean)));
     if(fields.phone)setFields.phone=fields.phone.replace(/[\s()-]/g,""); if(fields.email!==undefined)setFields.email=fields.email.toLowerCase()||undefined;
     if(fields.inOffice!==undefined)setFields.checkedInAt=fields.inOffice?new Date():null;
     const update:Record<string,unknown>={$set:setFields};
