@@ -46,3 +46,14 @@ export async function sendPasswordReset({name,email,resetUrl}:{name:string;email
   });
   if(error)throw new Error(error.message); return {id:data?.id};
 }
+
+export async function sendTeamWelcome({name,email,role}:{name:string;email:string;role:string}) {
+  const {resend,from}=client(); const safeName=escapeHtml(name); const safeEmail=escapeHtml(email); const safeRole=escapeHtml(role);
+  const loginUrl=`${appUrl()}/login`; const resetUrl=`${appUrl()}/forgot-password`;
+  const {data,error}=await resend.emails.send({
+    from,to:[email],subject:"You have been added to Aims Global CRM",
+    html:brandedEmail({preview:"Your Aims Global CRM staff account is ready.",content:`<h1 style="font-size:23px;color:#123a72;margin:0 0 18px">Welcome to Aims Global CRM</h1><p>Hello ${safeName},</p><p>You have been added as a <strong>${safeRole}</strong> team member. You can now access the consultancy CRM using the account below.</p><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin:22px 0;background:#f5f8fc;border:1px solid #e3eaf3;border-radius:9px"><tr><td style="padding:16px"><span style="font-size:12px;color:#718096">LOGIN EMAIL</span><br><strong style="color:#123a72">${safeEmail}</strong></td></tr></table><p style="margin:26px 0"><a href="${loginUrl}" style="display:inline-block;background:#0754b8;color:white;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:bold">Open Aims Global CRM</a></p><p>Use the temporary password shared with you securely by your administrator. If you do not know your password, <a href="${resetUrl}" style="color:#0754b8">set a new password here</a>.</p><p style="font-size:12px;color:#718096;margin-top:24px">For security, never share your CRM password with anyone.</p>`}),
+    text:`Hello ${name}, you have been added to Aims Global CRM as ${role}. Login: ${loginUrl}\nYour login email: ${email}\nUse the temporary password shared securely by your administrator. If needed, reset it here: ${resetUrl}`,
+  });
+  if(error)throw new Error(error.message); return {id:data?.id};
+}

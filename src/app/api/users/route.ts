@@ -4,6 +4,7 @@ import { z } from "zod";
 import { connectMongo } from "@/lib/mongodb";
 import { isPrivileged, rateLimit, requireSameOrigin, requireSession } from "@/lib/api-security";
 import { User } from "@/models/User";
+import { sendTeamWelcome } from "@/lib/email";
 
 const newMember = z.object({
   name: z.string().trim().min(2).max(120),
@@ -41,7 +42,10 @@ export async function POST(request: NextRequest) {
     if (exists) return NextResponse.json({ error: "A staff account with this email already exists" }, { status: 409 });
     const { password, ...profile } = parsed.data;
     const user = await User.create({ ...profile, email: profile.email.toLowerCase(), passwordHash: await bcrypt.hash(password, 12), active: true });
-    return NextResponse.json({ user: { _id: user._id, name: user.name, email: user.email, phone: user.phone, role: user.role, active: user.active, createdAt: user.createdAt } }, { status: 201 });
+    let invitationStatus:"sent"|"failed"="sent";
+    try { await sendTeamWelcome({name:user.name,email:user.email,role:String(user.role).replace("_"," ")}); }
+    catch(error) { invitationStatus="failed"; console.error("Team welcome email failed",error instanceof Error?error.message:"Unknown error"); }
+    return NextResponse.json({ user: { _id: user._id, name: user.name, email: user.email, phone: user.phone, role: user.role, active: user.active, createdAt: user.createdAt }, invitationStatus }, { status: 201 });
   } catch (error) {
     if ((error as { code?: number }).code === 11000) return NextResponse.json({ error: "A staff account with this email already exists" }, { status: 409 });
     return NextResponse.json({ error: "Could not create staff account" }, { status: 500 });
