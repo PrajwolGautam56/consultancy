@@ -14,6 +14,7 @@ const leadSchema = new Schema({
   email: { type: String, lowercase: true, trim: true, sparse: true, unique: true },
   address: { type: String, trim: true, maxlength: 300 },
   education: { type: String, trim: true, maxlength: 300 },
+  passedOutInstitute: { type: String, trim: true, maxlength: 200 },
   country: { type: String, trim: true, maxlength: 100 },
   course: { type: String, trim: true, maxlength: 200 },
   university: { type: String, trim: true, maxlength: 200 },
@@ -34,4 +35,5 @@ const leadSchema = new Schema({
 
 leadSchema.index({ name: "text", phone: "text", email: "text", country: "text", course: "text" });
 leadSchema.index({ tags: 1 });
+leadSchema.index({ passedOutInstitute: 1 });
 export const Lead = models.Lead || model("Lead", leadSchema);

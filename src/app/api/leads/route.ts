@@ -7,7 +7,7 @@ import { rateLimit, requireSameOrigin, requireSession } from "@/lib/api-security
 const createLead = z.object({
   name: z.string().trim().min(2).max(120), phone: z.string().trim().min(7).max(24),
   email: z.union([z.string().trim().email().max(254), z.literal("")]).optional(),
-  address: z.string().trim().max(300).optional(), education: z.string().trim().max(300).optional(),
+  address: z.string().trim().max(300).optional(), education: z.string().trim().max(300).optional(), passedOutInstitute: z.string().trim().max(200).optional(),
   country: z.string().trim().max(100).optional(), course: z.string().trim().max(200).optional(),
   university: z.string().trim().max(200).optional(),
   tags: z.string().trim().max(500).optional(),

@@ -9,7 +9,7 @@ import { sendVisitThankYou } from "@/lib/email";
 const updateSchema = z.object({
   name: z.string().trim().min(2).max(120).optional(), phone: z.string().trim().min(7).max(24).optional(),
   email: z.union([z.string().trim().email().max(254), z.literal("")]).optional(), address: z.string().trim().max(300).optional(),
-  education: z.string().trim().max(300).optional(), country: z.string().trim().max(100).optional(), course: z.string().trim().max(200).optional(), university: z.string().trim().max(200).optional(),
+  education: z.string().trim().max(300).optional(), passedOutInstitute: z.string().trim().max(200).optional(), country: z.string().trim().max(100).optional(), course: z.string().trim().max(200).optional(), university: z.string().trim().max(200).optional(),
   source: z.enum(["Facebook", "Instagram", "Phone call", "Walk-in", "Referral", "Website", "Other"]).optional(),
   stage: z.enum(["New inquiry", "Contacted", "Counselling", "Application", "Enrolled", "Lost"]).optional(),
   priority: z.enum(["Low", "Medium", "High"]).optional(), counsellor: z.string().trim().max(120).optional(),
