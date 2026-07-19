@@ -20,6 +20,13 @@
 @media(max-width:650px){.topbar{height:64px;padding:0 14px}.topbar>.primary{width:40px;padding:0;font-size:0}.global-search{width:auto;flex:1}.global-search kbd{display:none}.content{padding:20px 14px}.page-heading{align-items:flex-start}.page-heading h1{font-size:21px}.stats{grid-template-columns:1fr 1fr;gap:10px}.stat{padding:13px;min-height:90px}.stat-icon{width:36px;height:36px}.stat strong{font-size:20px}.dashboard-grid{gap:10px}.lead-form{grid-template-columns:1fr}.lead-form .wide,.form-actions{grid-column:auto}.directory-tools{flex-wrap:wrap}.global-search.inner{width:100%}.profile-section dl{grid-template-columns:1fr}.quick-actions{padding-left:14px;padding-right:14px}.office-row{flex-wrap:wrap}.office-row>span:nth-child(2){min-width:180px}}
 @media(max-width:800px){.login-page{display:block}.login-brand{display:none}.login-side{min-height:100vh;padding:28px 22px}.login-mobile-brand{display:flex}}
 @media(max-width:520px){.action-form,.edit-form{grid-template-columns:1fr}.action-form{margin-left:14px;margin-right:14px}.action-form-title,.action-form label:nth-of-type(2),.action-form>div:last-child,.edit-actions{grid-column:auto}}
+
+.quick-actions{grid-template-columns:repeat(4,1fr)}
+.email-compose{grid-template-columns:1fr}
+.email-compose .action-form-title,.email-compose label,.email-compose>div:last-child,.email-compose .wide{grid-column:1/-1}
+.email-compose textarea{height:130px;line-height:1.5}
+.email-compose .primary:disabled{opacity:.55;cursor:not-allowed}
+@media(max-width:420px){.quick-actions{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:760px){.team-summary{grid-template-columns:1fr 1fr}.team-summary>div:nth-child(2){border-right:0}.team-member{flex-wrap:wrap}.team-person{min-width:calc(100% - 52px)}.last-login{width:auto;margin-left:auto}.team-toolbar{align-items:flex-start;flex-direction:column}}
 @media(max-width:900px){.followup-stats{grid-template-columns:1fr 1fr}.followup-row{flex-wrap:wrap}.followup-person{min-width:calc(100% - 60px)}.followup-owner,.followup-when{width:auto;flex:1}.settings-grid{grid-template-columns:1fr}}
 @media(max-width:650px){.notification-popover{position:fixed;left:12px;right:12px;top:68px;width:auto}.followup-stats{grid-template-columns:1fr 1fr}}

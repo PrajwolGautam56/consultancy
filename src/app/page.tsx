@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   Bell, CalendarClock, CheckCircle2, ChevronRight, CircleUserRound,
-  LayoutDashboard, LogOut, Menu, MessageSquareText, Pencil, Phone, Plus,
+  LayoutDashboard, LogOut, Mail, Menu, MessageSquareText, Pencil, Phone, Plus,
   Search, Settings, Sparkles, UserCheck, UserRoundPlus, Users, X,
 } from "lucide-react";
 
@@ -175,9 +175,11 @@ function OfficeView({leads,update,select,addNew}:{leads:Lead[];update:(x:Lead,ac
 function Profile({lead,counsellors,close,update}:{lead:Lead;counsellors:string[];close:()=>void;update:(l:Lead,activity?:{type:string;text:string})=>void}) {
   const [note,setNote]=useState("");
   const notes=(lead.activities||[]).slice().reverse();
-  const [action,setAction]=useState<"call"|"followup"|null>(null);
+  const [action,setAction]=useState<"call"|"followup"|"email"|null>(null);
   const [feedback,setFeedback]=useState("");
   const [editing,setEditing]=useState(false);
+  const [emailError,setEmailError]=useState("");
+  const [sendingEmail,setSendingEmail]=useState(false);
 
   function saveCall(event:FormEvent<HTMLFormElement>) {
     event.preventDefault(); const data=new FormData(event.currentTarget); const outcome=String(data.get("outcome")); const details=String(data.get("details")||"").trim();
@@ -194,14 +196,25 @@ function Profile({lead,counsellors,close,update}:{lead:Lead;counsellors:string[]
     const changed:Lead={...lead,name:String(data.get("name")).trim(),phone:String(data.get("phone")).trim(),email:String(data.get("email")).trim(),address:String(data.get("address")).trim(),education:String(data.get("education")).trim(),country:String(data.get("country")).trim(),course:String(data.get("course")).trim(),university:String(data.get("university")).trim(),source:String(data.get("source")),stage:String(data.get("stage")) as Stage,counsellor:String(data.get("counsellor")),priority:String(data.get("priority")) as Lead["priority"],updated:"Edited just now"};
     update(changed,{type:"note",text:"Student and enquiry details updated"}); setEditing(false); setFeedback("Student details updated successfully.");
   }
+  async function sendEmail(event:FormEvent<HTMLFormElement>) {
+    event.preventDefault(); setEmailError(""); setFeedback(""); setSendingEmail(true);
+    const data=new FormData(event.currentTarget); const subject=String(data.get("subject")||""); const message=String(data.get("message")||"");
+    try {
+      const response=await fetch(`/api/leads/${encodeURIComponent(lead.id)}/email`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({subject,message})});
+      const result=await response.json(); if(!response.ok)throw new Error(result.error||"Email could not be sent");
+      setAction(null); setFeedback(`Email sent successfully to ${lead.email}.`);
+    } catch(error) { setEmailError(error instanceof Error?error.message:"Email could not be sent"); }
+    finally { setSendingEmail(false); }
+  }
 
   return <div className="drawer-backdrop" onMouseDown={e=>e.target===e.currentTarget&&close()}><aside className="profile-drawer">
     <div className="modal-head"><div><p className="eyebrow">STUDENT #{lead.id}</p></div><button onClick={close}><X/></button></div>
     <div className="profile-hero"><Avatar name={lead.name} warm/><div><h2>{lead.name}</h2><p>{lead.phone} · {lead.email}</p><div className="profile-status"><StageSelect lead={lead} onChange={stage=>{update({...lead,stage,updated:"Stage changed just now"},{type:"stage",text:`Stage changed to ${stage}`});setFeedback(`Stage changed to ${stage}.`)}}/>{lead.inOffice&&<span className="office-status">In office</span>}</div></div></div>
-    <div className="quick-actions"><button className={action==="call"?"selected":""} onClick={()=>{setAction(action==="call"?null:"call");setFeedback("")}}><Phone/> Log call</button><button className={action==="followup"?"selected":""} onClick={()=>{setAction(action==="followup"?null:"followup");setFeedback("")}}><CalendarClock/> Follow-up</button><button onClick={toggleOffice}><UserCheck/> {lead.inOffice?"Check out":"Check in"}</button></div>
+    <div className="quick-actions"><button className={action==="call"?"selected":""} onClick={()=>{setAction(action==="call"?null:"call");setFeedback("");setEmailError("")}}><Phone/> Log call</button><button className={action==="followup"?"selected":""} onClick={()=>{setAction(action==="followup"?null:"followup");setFeedback("");setEmailError("")}}><CalendarClock/> Follow-up</button><button className={action==="email"?"selected":""} onClick={()=>{setAction(action==="email"?null:"email");setFeedback("");setEmailError("")}}><Mail/> Send email</button><button onClick={toggleOffice}><UserCheck/> {lead.inOffice?"Check out":"Check in"}</button></div>
     {feedback&&<div className="action-success"><CheckCircle2 size={16}/>{feedback}</div>}
     {action==="call"&&<form className="action-form" onSubmit={saveCall}><div className="action-form-title"><Phone size={17}/><div><strong>Log a phone call</strong><small>Save the result in this student’s timeline</small></div></div><label>Call outcome<select name="outcome"><option>Connected</option><option>No answer</option><option>Busy</option><option>Call back requested</option><option>Wrong number</option></select></label><label>Call notes<textarea name="details" required placeholder="What was discussed?"/></label><div><button type="button" className="secondary" onClick={()=>setAction(null)}>Cancel</button><button className="primary">Save call</button></div></form>}
     {action==="followup"&&<form className="action-form" onSubmit={saveFollowUp}><div className="action-form-title"><CalendarClock size={17}/><div><strong>Schedule follow-up</strong><small>Create the next reminder for this student</small></div></div><label>Date and time<input name="date" type="datetime-local" required min={new Date().toISOString().slice(0,16)}/></label><label>Follow-up method<select name="method"><option>Phone call</option><option>WhatsApp</option><option>Email</option><option>Office meeting</option></select></label><div><button type="button" className="secondary" onClick={()=>setAction(null)}>Cancel</button><button className="primary">Schedule</button></div></form>}
+    {action==="email"&&<form className="action-form email-compose" onSubmit={sendEmail}><div className="action-form-title"><Mail size={17}/><div><strong>Send a custom email</strong><small>{lead.email?`To ${lead.email}`:"This student does not have an email address"}</small></div></div>{emailError&&<div className="form-error wide">{emailError}</div>}<label>Subject<input name="subject" required minLength={3} maxLength={150} placeholder="Application update, document reminder..."/></label><label>Message<textarea name="message" required maxLength={5000} placeholder={`Write your message to ${lead.name}...`}/></label><div><button type="button" className="secondary" onClick={()=>setAction(null)}>Cancel</button><button className="primary" disabled={sendingEmail||!lead.email}>{sendingEmail?"Sending...":"Send email"}</button></div></form>}
     <div className="profile-section"><div className="section-heading"><h3>Student & enquiry details</h3><button className="edit-details" onClick={()=>{setEditing(!editing);setFeedback("")}}><Pencil size={14}/> {editing?"Close editor":"Edit details"}</button></div>
       {editing?<form className="edit-form" onSubmit={saveDetails}><label>Student name<input name="name" required defaultValue={lead.name}/></label><label>Phone number<input name="phone" required defaultValue={lead.phone}/></label><label>Email address<input name="email" type="email" defaultValue={lead.email}/></label><label>Address<input name="address" defaultValue={lead.address}/></label><label>Education<input name="education" defaultValue={lead.education}/></label><label>Interested country<input name="country" defaultValue={lead.country}/></label><label>Course / subject<input name="course" defaultValue={lead.course}/></label><label>Preferred university<input name="university" defaultValue={lead.university}/></label><label>Lead source<select name="source" defaultValue={lead.source}><option>Facebook</option><option>Phone call</option><option>Walk-in</option><option>Instagram</option><option>Referral</option><option>Website</option><option>Other</option></select></label><label>Pipeline stage<select name="stage" defaultValue={lead.stage}>{Object.keys(stageStyle).map(stage=><option key={stage}>{stage}</option>)}</select></label><label>Assigned counsellor<select name="counsellor" defaultValue={lead.counsellor}><option>Unassigned</option>{counsellors.map(name=><option key={name}>{name}</option>)}</select></label><label>Priority<select name="priority" defaultValue={lead.priority}><option>High</option><option>Medium</option><option>Low</option></select></label><div className="edit-actions"><button type="button" className="secondary" onClick={()=>setEditing(false)}>Cancel</button><button className="primary">Save changes</button></div></form>:<dl><div><dt>Country</dt><dd>{lead.country||"—"}</dd></div><div><dt>Course</dt><dd>{lead.course||"—"}</dd></div><div><dt>University</dt><dd>{lead.university||"—"}</dd></div><div><dt>Education</dt><dd>{lead.education||"—"}</dd></div><div><dt>Address</dt><dd>{lead.address||"—"}</dd></div><div><dt>Source</dt><dd>{lead.source}</dd></div><div><dt>Assigned to</dt><dd>{lead.counsellor}</dd></div><div><dt>Next follow-up</dt><dd>{lead.nextFollowUp}</dd></div></dl>}
     </div>
