@@ -1,0 +1,37 @@
+import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
+import { isValidObjectId } from "mongoose";
+import { connectMongo } from "@/lib/mongodb";
+import { Lead } from "@/models/Lead";
+import { requireSameOrigin, requireSession } from "@/lib/api-security";
+
+const updateSchema = z.object({
+  name: z.string().trim().min(2).max(120).optional(), phone: z.string().trim().min(7).max(24).optional(),
+  email: z.union([z.string().trim().email().max(254), z.literal("")]).optional(), address: z.string().trim().max(300).optional(),
+  education: z.string().trim().max(300).optional(), country: z.string().trim().max(100).optional(), course: z.string().trim().max(200).optional(), university: z.string().trim().max(200).optional(),
+  source: z.enum(["Facebook", "Instagram", "Phone call", "Walk-in", "Referral", "Website", "Other"]).optional(),
+  stage: z.enum(["New inquiry", "Contacted", "Counselling", "Application", "Enrolled", "Lost"]).optional(),
+  priority: z.enum(["Low", "Medium", "High"]).optional(), counsellor: z.string().trim().max(120).optional(),
+  inOffice: z.boolean().optional(), nextFollowUp: z.union([z.string().datetime(), z.null()]).optional(),
+  activity: z.object({ type: z.enum(["note", "call", "visit", "stage", "follow_up", "assignment"]), text: z.string().trim().min(1).max(2000) }).optional(),
+}).strict();
+
+export async function PATCH(request:NextRequest,{params}:{params:Promise<{id:string}>}) {
+  const session=await requireSession(request); if(session instanceof NextResponse)return session;
+  if(!requireSameOrigin(request))return NextResponse.json({error:"Invalid request origin"},{status:403});
+  const {id}=await params; if(!isValidObjectId(id))return NextResponse.json({error:"Invalid lead id"},{status:400});
+  const parsed=updateSchema.safeParse(await request.json()); if(!parsed.success)return NextResponse.json({error:"Invalid update",fields:parsed.error.flatten().fieldErrors},{status:400});
+  if(session.role==="receptionist") {
+    const allowed=new Set(["inOffice","activity"]); const forbidden=Object.keys(parsed.data).some(key=>!allowed.has(key));
+    if(forbidden)return NextResponse.json({error:"Receptionists can only manage visits and activity notes"},{status:403});
+  }
+  try {
+    await connectMongo(); const {activity,...fields}=parsed.data; const setFields:Record<string,unknown>={...fields};
+    if(fields.phone)setFields.phone=fields.phone.replace(/[\s()-]/g,""); if(fields.email!==undefined)setFields.email=fields.email.toLowerCase()||undefined;
+    if(fields.inOffice!==undefined)setFields.checkedInAt=fields.inOffice?new Date():null;
+    const update:Record<string,unknown>={$set:setFields};
+    if(activity)update.$push={activities:{...activity,authorId:session.userId,authorName:session.name,occurredAt:new Date()}};
+    const lead=await Lead.findByIdAndUpdate(id,update,{new:true,runValidators:true}).lean();
+    if(!lead)return NextResponse.json({error:"Lead not found"},{status:404}); return NextResponse.json({lead});
+  } catch(error) { if((error as {code?:number}).code===11000)return NextResponse.json({error:"Phone or email is already in use"},{status:409}); return NextResponse.json({error:"Could not update lead"},{status:500}); }
+}
