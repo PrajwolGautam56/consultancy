@@ -28,6 +28,8 @@ const leadSchema = new Schema({
   inOffice: { type: Boolean, default: false, index: true },
   checkedInAt: Date,
   nextFollowUp: Date,
+  followUpAssignedTo: { type: Schema.Types.ObjectId, ref: "User", index: true },
+  followUpAssignee: { type: String, trim: true, maxlength: 120 },
   activities: [activitySchema],
   createdBy: { type: Schema.Types.ObjectId, ref: "User", required: true },
   archivedAt: Date,

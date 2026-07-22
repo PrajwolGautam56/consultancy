@@ -15,6 +15,8 @@ const updateSchema = z.object({
   priority: z.enum(["Low", "Medium", "High"]).optional(), counsellor: z.string().trim().max(120).optional(),
   tags: z.array(z.string().trim().min(1).max(40)).max(20).optional(),
   inOffice: z.boolean().optional(), nextFollowUp: z.union([z.string().datetime(), z.null()]).optional(),
+  assignedTo: z.union([z.string().regex(/^[a-f\d]{24}$/i),z.null()]).optional(),
+  followUpAssignedTo: z.union([z.string().regex(/^[a-f\d]{24}$/i),z.null()]).optional(), followUpAssignee:z.string().trim().max(120).optional(),
   activity: z.object({ type: z.enum(["note", "call", "visit", "stage", "follow_up", "assignment"]), text: z.string().trim().min(1).max(2000) }).optional(),
 }).strict();
 
@@ -27,9 +29,11 @@ export async function PATCH(request:NextRequest,{params}:{params:Promise<{id:str
     const allowed=new Set(["inOffice","activity","tags"]); const forbidden=Object.keys(parsed.data).some(key=>!allowed.has(key));
     if(forbidden)return NextResponse.json({error:"Receptionists can only manage visits and activity notes"},{status:403});
   }
+  if(["counsellor","manager"].includes(session.role)&&(parsed.data.assignedTo!==undefined||parsed.data.counsellor!==undefined))return NextResponse.json({error:"Only an administrator can change the student owner"},{status:403});
   try {
-    await connectMongo(); const existing=await Lead.findById(id).select("inOffice name email").lean() as null|{inOffice?:boolean;name?:string;email?:string};
+    await connectMongo(); const existing=await Lead.findById(id).select("inOffice name email assignedTo followUpAssignedTo counsellor followUpAssignee").lean() as null|{inOffice?:boolean;name?:string;email?:string;assignedTo?:unknown;followUpAssignedTo?:unknown;counsellor?:string;followUpAssignee?:string};
     if(!existing)return NextResponse.json({error:"Lead not found"},{status:404});
+    if(["counsellor","manager"].includes(session.role)&&String(existing.assignedTo||"")!==session.userId&&String(existing.followUpAssignedTo||"")!==session.userId&&String(existing.counsellor||"")!==session.name&&String(existing.followUpAssignee||"")!==session.name)return NextResponse.json({error:"This student is not assigned to you"},{status:403});
     const {activity,...fields}=parsed.data; const setFields:Record<string,unknown>={...fields};
     if(fields.tags)setFields.tags=Array.from(new Set(fields.tags.map(tag=>tag.trim()).filter(Boolean)));
     if(fields.phone)setFields.phone=fields.phone.replace(/[\s()-]/g,""); if(fields.email!==undefined)setFields.email=fields.email.toLowerCase()||undefined;
