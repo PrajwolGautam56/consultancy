@@ -52,3 +52,15 @@ export async function PATCH(request:NextRequest,{params}:{params:Promise<{id:str
     return NextResponse.json({lead,emailStatus});
   } catch(error) { if((error as {code?:number}).code===11000)return NextResponse.json({error:"Phone or email is already in use"},{status:409}); return NextResponse.json({error:"Could not update lead"},{status:500}); }
 }
+
+export async function DELETE(request:NextRequest,{params}:{params:Promise<{id:string}>}) {
+  const session=await requireSession(request); if(session instanceof NextResponse)return session;
+  if(session.role!=="super_admin"&&session.role!=="admin")return NextResponse.json({error:"Only an administrator can delete a lead"},{status:403});
+  if(!requireSameOrigin(request))return NextResponse.json({error:"Invalid request origin"},{status:403});
+  const {id}=await params; if(!isValidObjectId(id))return NextResponse.json({error:"Invalid lead id"},{status:400});
+  try {
+    await connectMongo(); const deleted=await Lead.findByIdAndDelete(id).select("name").lean() as unknown as null|{name?:string};
+    if(!deleted)return NextResponse.json({error:"Lead not found"},{status:404});
+    return NextResponse.json({deleted:true,name:deleted.name});
+  } catch {return NextResponse.json({error:"Could not delete lead"},{status:500});}
+}
