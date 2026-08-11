@@ -9,7 +9,6 @@ export async function proxy(request: NextRequest) {
   const token = request.cookies.get(SESSION_COOKIE)?.value;
   let authenticated = false;
   if (token) { try { await verifySessionToken(token); authenticated = true; } catch { authenticated = false; } }
-  if (isLogin && authenticated) return NextResponse.redirect(new URL("/", request.url));
   if (!isPublicPage && !isPublicApi && !authenticated) {
     if (pathname.startsWith("/api/")) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
     return NextResponse.redirect(new URL("/login", request.url));

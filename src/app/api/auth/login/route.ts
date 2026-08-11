@@ -20,11 +20,13 @@ export async function POST(request: NextRequest) {
     if (!user || !user.active || !(await bcrypt.compare(String(password), user.passwordHash))) {
       return NextResponse.json({ error: "Invalid email or password" }, { status: 401 });
     }
-    const session: SessionPayload = { userId: user._id.toString(), email: user.email, name: user.name, role: user.role };
+    const sessionId=crypto.randomUUID();
+    const session: SessionPayload = { userId: user._id.toString(), email: user.email, name: user.name, role: user.role, sessionId };
     const token = await createSessionToken(session);
     user.lastLoginAt = new Date();
+    user.currentSessionId=sessionId;
     await user.save();
-    const response = NextResponse.json({ user: session });
+    const response = NextResponse.json({ user: {userId:session.userId,email:session.email,name:session.name,role:session.role} });
     response.cookies.set(SESSION_COOKIE, token, { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax", path: "/", maxAge: 60 * 60 * 8 });
     return response;
   } catch (error) {

@@ -1,10 +1,7 @@
-import { cookies } from "next/headers";
-import { NextResponse } from "next/server";
-import { SESSION_COOKIE, verifySessionToken } from "@/lib/auth";
+import { NextRequest, NextResponse } from "next/server";
+import { requireSession } from "@/lib/api-security";
 
-export async function GET() {
-  const token = (await cookies()).get(SESSION_COOKIE)?.value;
-  if (!token) return NextResponse.json({ user: null }, { status: 401 });
-  try { return NextResponse.json({ user: await verifySessionToken(token) }); }
-  catch { return NextResponse.json({ user: null }, { status: 401 }); }
+export async function GET(request:NextRequest) {
+  const session=await requireSession(request); if(session instanceof NextResponse)return session;
+  return NextResponse.json({user:{userId:session.userId,email:session.email,name:session.name,role:session.role}});
 }

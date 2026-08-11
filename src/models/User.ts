@@ -5,5 +5,6 @@ const userSchema = new Schema({
   phone: String, passwordHash: { type: String, required: true, select: false },
   role: { type: String, enum: ["super_admin", "admin", "manager", "counsellor", "receptionist"], default: "counsellor" },
   branchId: { type: Schema.Types.ObjectId, ref: "Branch" }, active: { type: Boolean, default: true }, lastLoginAt: Date,
+  currentSessionId: { type: String, select: false },
 }, { timestamps: true });
 export const User = models.User || model("User", userSchema);

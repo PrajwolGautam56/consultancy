@@ -22,7 +22,7 @@ export async function PATCH(request:NextRequest,{params}:{params:Promise<{id:str
     await connectMongo(); const target=await User.findById(id);
     if(!target)return NextResponse.json({error:"Staff account not found"},{status:404});
     if(target.role==="super_admin"&&session.role!=="super_admin")return NextResponse.json({error:"Only a super administrator can modify this account"},{status:403});
-    if(parsed.data.password)target.passwordHash=await bcrypt.hash(parsed.data.password,12);
+    if(parsed.data.password){target.passwordHash=await bcrypt.hash(parsed.data.password,12);target.currentSessionId=undefined;}
     if(parsed.data.active!==undefined)target.active=parsed.data.active;
     await target.save();
     return NextResponse.json({user:{_id:target._id,name:target.name,email:target.email,phone:target.phone,role:target.role,active:target.active,lastLoginAt:target.lastLoginAt,createdAt:target.createdAt}});

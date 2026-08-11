@@ -13,6 +13,7 @@ export type SessionPayload = {
   email: string;
   name: string;
   role: "super_admin" | "admin" | "manager" | "counsellor" | "receptionist";
+  sessionId: string;
 };
 
 export async function createSessionToken(user: SessionPayload) {

@@ -57,3 +57,14 @@ export async function sendTeamWelcome({name,email,role}:{name:string;email:strin
   });
   if(error)throw new Error(error.message); return {id:data?.id};
 }
+
+export async function sendTaskAssignment({emails,title,creator,dueAt,taskUrl}:{emails:string[];title:string;creator:string;dueAt:Date;taskUrl:string}) {
+  const {resend,from}=client();const safeTitle=escapeHtml(title);const safeCreator=escapeHtml(creator);const safeUrl=escapeHtml(taskUrl);
+  const due=new Intl.DateTimeFormat("en-NP",{dateStyle:"medium",timeStyle:"short",timeZone:"Asia/Kathmandu"}).format(dueAt);
+  const {data,error}=await resend.emails.send({from,to:emails,subject:`New task assigned: ${title}`,html:brandedEmail({preview:`${creator} assigned you a new task.`,content:`<h1 style="font-size:23px;color:#123a72;margin:0 0 18px">New task assigned</h1><p><strong>${safeCreator}</strong> assigned you the following task:</p><div style="margin:20px 0;padding:16px;background:#f5f8fc;border:1px solid #e3eaf3;border-radius:9px"><strong style="font-size:17px;color:#123a72">${safeTitle}</strong><br><span style="font-size:13px;color:#718096">Due ${escapeHtml(due)}</span></div><p><a href="${safeUrl}" style="display:inline-block;background:#0754b8;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:bold">Open Tasks in CRM</a></p>`}),text:`${creator} assigned you a new task: ${title}. Due ${due}. Open CRM: ${taskUrl}`});if(error)throw new Error(error.message);return {id:data?.id};
+}
+
+export async function sendTaskUpdate({emails,title,actor,status,comment}:{emails:string[];title:string;actor:string;status:string;comment?:string}) {
+  const {resend,from}=client();const safeComment=comment?escapeHtml(comment).replace(/\r?\n/g,"<br>"):"No additional remark.";
+  const {data,error}=await resend.emails.send({from,to:emails,subject:`Task updated: ${title}`,html:brandedEmail({preview:`${actor} updated ${title}.`,content:`<h1 style="font-size:23px;color:#123a72;margin:0 0 18px">Task updated</h1><p><strong>${escapeHtml(actor)}</strong> updated <strong>${escapeHtml(title)}</strong>.</p><p>Status: <strong>${escapeHtml(status)}</strong></p><div style="margin:18px 0;padding:14px;background:#f5f8fc;border-radius:9px">${safeComment}</div><p><a href="${appUrl()}/" style="color:#0754b8;font-weight:bold">View task in CRM</a></p>`}),text:`${actor} updated task "${title}". Status: ${status}.${comment?` Remark: ${comment}`:""}`});if(error)throw new Error(error.message);return {id:data?.id};
+}

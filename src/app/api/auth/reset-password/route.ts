@@ -18,7 +18,7 @@ export async function POST(request:NextRequest) {
     const reset=await PasswordReset.findOne({tokenHash,usedAt:null,expiresAt:{$gt:new Date()}});
     if(!reset)return NextResponse.json({error:"This reset link is invalid or has expired"},{status:400});
     const user=await User.findById(reset.userId);if(!user||!user.active)return NextResponse.json({error:"This account is unavailable"},{status:400});
-    user.passwordHash=await bcrypt.hash(parsed.data.password,12);await user.save();
+    user.passwordHash=await bcrypt.hash(parsed.data.password,12);user.currentSessionId=undefined;await user.save();
     reset.usedAt=new Date();await reset.save();await PasswordReset.deleteMany({userId:user._id,_id:{$ne:reset._id}});
     return NextResponse.json({message:"Password changed successfully. You can now sign in."});
   } catch {return NextResponse.json({error:"Password could not be reset"},{status:500});}
