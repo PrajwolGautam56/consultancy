@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { Check, MessageCircle, RefreshCw, Send, ShieldCheck } from "lucide-react";
+import { Check, MessageCircle, RefreshCw, Send, ShieldCheck, Upload, X } from "lucide-react";
 
 type Contact = { _id: string; name: string; phone: string; whatsappOptIn?: boolean };
 type Message = { _id: string; leadId?: string; direction: "inbound" | "outbound"; body: string; status: string; occurredAt: string };
@@ -18,6 +18,9 @@ export default function WhatsAppView({ privileged }: { privileged: boolean }) {
   const [reply, setReply] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+  const [showImport, setShowImport] = useState(false);
+  const [importText, setImportText] = useState("");
+  const [consentConfirmed, setConsentConfirmed] = useState(false);
 
   async function load() {
     const [messageResponse, campaignResponse] = await Promise.all([
@@ -78,6 +81,23 @@ export default function WhatsAppView({ privileged }: { privileged: boolean }) {
     }
     setBusy(false); setChecked([]); setNotice(`Campaign completed: ${progress.sent} sent, ${progress.failed} failed.`); await load();
   }
+  function parseImport() {
+    return importText.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => {
+      const columns = line.split(line.includes("\t") ? "\t" : ",").map((value) => value.trim().replace(/^['"]|['"]$/g, ""));
+      return { name: columns[0] || "", phone: columns[1] || "" };
+    }).filter((contact, index) => contact.name && contact.phone && !(index === 0 && /name/i.test(contact.name) && /phone|mobile/i.test(contact.phone)));
+  }
+  async function importContacts() {
+    const parsed = parseImport();
+    if (!parsed.length) return setNotice("Paste contacts as Name, Phone — one student per line.");
+    if (!consentConfirmed) return setNotice("Confirm that these students agreed to receive WhatsApp messages.");
+    setBusy(true); setNotice(`Importing ${parsed.length} contacts…`);
+    const response = await fetch("/api/whatsapp/import", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contacts: parsed, consentConfirmed: true, consentSource: "Bulk campaign list confirmed by administrator" }) });
+    const data = await response.json(); setBusy(false);
+    if (!response.ok) return setNotice(data.error || "Contacts could not be imported");
+    await load(); setChecked(data.leadIds || []); setShowImport(false); setImportText(""); setConsentConfirmed(false);
+    setNotice(`${data.total} contacts ready and selected: ${data.created} new, ${data.matched} matched existing CRM records.`);
+  }
 
   return <div className="wa-page">
     {!configured && <div className="wa-warning"><ShieldCheck size={20}/><span><strong>WhatsApp API setup required</strong><small>Add the Meta credentials in Vercel before sending. The inbox and consent preparation can be used now.</small></span></div>}
@@ -95,7 +115,8 @@ export default function WhatsAppView({ privileged }: { privileged: boolean }) {
       </div>
     </section>
     {privileged && <section className="panel wa-campaign">
-      <div className="task-toolbar"><span><h2>Bulk WhatsApp campaign</h2><p>Only contacts with recorded opt-in can receive an approved marketing template.</p></span></div>
+      <div className="task-toolbar"><span><h2>Bulk WhatsApp campaign</h2><p>Import a name/phone list or select existing opted-in CRM contacts.</p></span><button className="primary" onClick={() => setShowImport(true)}><Upload size={15}/> Import contacts</button></div>
+      {showImport && <div className="wa-import"><header><span><strong>Bulk import campaign contacts</strong><small>CSV columns or pasted lines: Name, Phone</small></span><button onClick={() => setShowImport(false)} aria-label="Close import"><X size={16}/></button></header><div><label>Paste name and phone<textarea value={importText} onChange={(event) => setImportText(event.target.value)} placeholder={"Name, Phone\nAayush Shrestha, 9841280991\nSita Rai, 9800000000"}/></label><label className="wa-file"><Upload size={18}/><span>Upload CSV file<small>The first two columns must be Name and Phone.</small></span><input type="file" accept=".csv,text/csv,.txt" onChange={(event) => { const file = event.target.files?.[0]; if (file) file.text().then(setImportText); }}/></label></div><label className="wa-consent"><input type="checkbox" checked={consentConfirmed} onChange={(event) => setConsentConfirmed(event.target.checked)}/><span>I confirm these students agreed to receive WhatsApp messages from AIMS Global. The CRM will store this consent source.</span></label><footer><span>{parseImport().length} valid row(s) detected</span><button className="primary" disabled={busy || !consentConfirmed || !parseImport().length} onClick={() => void importContacts()}>{busy ? "Importing…" : "Import and select students"}</button></footer></div>}
       <div className="wa-campaign-grid">
         <div className="wa-audience"><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Filter students"/><div>{filtered.map((contact) => <label key={contact._id}><input type="checkbox" checked={checked.includes(String(contact._id))} onChange={() => toggle(String(contact._id))}/><span><strong>{contact.name}</strong><small>{contact.phone}</small></span><em className={contact.whatsappOptIn ? "yes" : "no"}>{contact.whatsappOptIn ? "Opted in" : "No consent"}</em></label>)}</div><footer><button className="secondary" disabled={busy} onClick={() => void recordConsent(true)}>Record opt-in</button><button className="secondary" disabled={busy} onClick={() => void recordConsent(false)}>Opt out</button></footer></div>
         <form className="wa-campaign-form" onSubmit={createCampaign}><label>Campaign name<input required name="name" placeholder="India scholarship – September"/></label><label>Approved Meta template name<input required name="templateName" pattern="[a-z0-9_]+" placeholder="india_scholarship_event"/></label><div><label>Language code<input required name="language" defaultValue="en"/></label><label>Event date/detail<input required name="eventDetail" placeholder="5 October, 11 AM"/></label></div><div className="wa-estimate"><strong>{optedInSelected.length} recipients selected</strong><span>Estimated Meta marketing fee: ≈ NPR {(optedInSelected.length * 13.87).toLocaleString("en-NP", { maximumFractionDigits: 0 })}</span><small>Estimate only; Meta bills by recipient country and delivered message.</small></div><button className="primary" disabled={busy || !configured || !optedInSelected.length}><Send size={16}/>{busy ? "Sending…" : "Create and send campaign"}</button></form>
