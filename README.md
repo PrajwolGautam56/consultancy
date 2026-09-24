@@ -25,6 +25,10 @@ Open `http://localhost:3000`. Authentication and a working MongoDB connection ar
 
 The implemented trial covers live dashboard metrics, lead/student directory, search by personal or enquiry fields, full profile editing, persistent notes/calls, visitor check-in/out, counsellor ownership, persistent follow-ups, responsive navigation, and duplicate-safe enquiry creation.
 
+## WhatsApp Cloud API
+
+The CRM includes a shared WhatsApp inbox, explicit consent records, approved-template campaigns, delivery/read webhooks, cost estimates, and controlled campaign batches. Configure the `WHATSAPP_*` and `META_*` values from `.env.example`, then register `https://YOUR_DOMAIN/api/whatsapp/webhook` for the `messages` webhook field in the Meta App dashboard. Use a permanent system-user token in production; never expose it to the browser.
+
 Review [SECURITY.md](./SECURITY.md) before any public deployment.
 
 Before production deployment, complete session authentication, authorization checks per API route, audit log retention, file storage, backups, rate limiting, and Nepal privacy/consent review. Recommended next modules are application/document checklists, university/course catalog, payments, Facebook lead webhooks, WhatsApp/SMS, exports, and branch reporting.

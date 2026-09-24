@@ -14,6 +14,7 @@ import {
   Mail,
   Menu,
   MessageSquareText,
+  MessageCircle,
   Pencil,
   Phone,
   Plus,
@@ -26,6 +27,7 @@ import {
   Users,
   X,
 } from "lucide-react";
+import WhatsAppView from "@/components/WhatsAppView";
 
 type Stage =
   | "New inquiry"
@@ -102,6 +104,7 @@ type Lead = {
 const nav = [
   ["Dashboard", LayoutDashboard],
   ["Leads & students", Users],
+  ["WhatsApp", MessageCircle],
   ["Office visitors", UserCheck],
   ["Tasks", ListTodo],
   ["Follow-ups", CalendarClock],
@@ -813,6 +816,8 @@ export default function Home() {
               currentUser={currentUser}
               selectLead={setSelected}
             />
+          ) : active === "WhatsApp" ? (
+            <WhatsAppView privileged={["super_admin", "admin", "manager"].includes(currentUser?.role || "")} />
           ) : active === "Team" ? (
             <TeamView />
           ) : active === "Follow-ups" ? (
