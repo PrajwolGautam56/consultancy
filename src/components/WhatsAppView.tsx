@@ -6,11 +6,14 @@ import { Check, MessageCircle, RefreshCw, Send, ShieldCheck, Upload, X } from "l
 type Contact = { _id: string; name: string; phone: string; whatsappOptIn?: boolean };
 type Message = { _id: string; leadId?: string; direction: "inbound" | "outbound"; body: string; status: string; occurredAt: string };
 type Campaign = { _id: string; name: string; status: string; total: number; sent: number; failed: number; createdAt: string };
+type Template = { name: string; language: string; category: string; parameterCount: number };
 
 export default function WhatsAppView({ privileged }: { privileged: boolean }) {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [templates, setTemplates] = useState<Template[]>([]);
+  const [selectedTemplate, setSelectedTemplate] = useState("");
   const [configured, setConfigured] = useState(false);
   const [selectedContact, setSelectedContact] = useState("");
   const [checked, setChecked] = useState<string[]>([]);
@@ -23,9 +26,10 @@ export default function WhatsAppView({ privileged }: { privileged: boolean }) {
   const [consentConfirmed, setConsentConfirmed] = useState(false);
 
   async function load() {
-    const [messageResponse, campaignResponse] = await Promise.all([
+    const [messageResponse, campaignResponse, templateResponse] = await Promise.all([
       fetch("/api/whatsapp/messages"),
       privileged ? fetch("/api/whatsapp/campaigns") : Promise.resolve(null),
+      privileged ? fetch("/api/whatsapp/templates") : Promise.resolve(null),
     ]);
     const messageData = await messageResponse.json();
     if (messageResponse.ok) {
@@ -33,6 +37,7 @@ export default function WhatsAppView({ privileged }: { privileged: boolean }) {
       if (!selectedContact && messageData.leads?.[0]) setSelectedContact(String(messageData.leads[0]._id));
     }
     if (campaignResponse) { const data = await campaignResponse.json(); if (campaignResponse.ok) setCampaigns(data.campaigns || []); }
+    if (templateResponse) { const data = await templateResponse.json(); if (templateResponse.ok) { setTemplates(data.templates || []); setSelectedTemplate((current) => current || data.templates?.[0]?.name || ""); } }
   }
   useEffect(() => {
     fetch("/api/whatsapp/messages")
@@ -43,6 +48,7 @@ export default function WhatsAppView({ privileged }: { privileged: boolean }) {
         if (data.leads?.[0]) setSelectedContact(String(data.leads[0]._id));
       });
     if (privileged) fetch("/api/whatsapp/campaigns").then(async (response) => ({ ok: response.ok, data: await response.json() })).then(({ ok, data }) => { if (ok) setCampaigns(data.campaigns || []); });
+    if (privileged) fetch("/api/whatsapp/templates").then(async (response) => ({ ok: response.ok, data: await response.json() })).then(({ ok, data }) => { if (ok) { setTemplates(data.templates || []); setSelectedTemplate(data.templates?.[0]?.name || ""); } });
   }, [privileged]);
 
   const filtered = contacts.filter((contact) => `${contact.name} ${contact.phone}`.toLowerCase().includes(search.toLowerCase()));
@@ -69,7 +75,9 @@ export default function WhatsAppView({ privileged }: { privileged: boolean }) {
   async function createCampaign(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (!optedInSelected.length) return setNotice("Select students with recorded WhatsApp opt-in.");
     const form = new FormData(event.currentTarget); setBusy(true); setNotice("");
-    const response = await fetch("/api/whatsapp/campaigns", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: form.get("name"), templateName: form.get("templateName"), language: form.get("language"), leadIds: optedInSelected, bodyParameters: ["{{name}}", String(form.get("eventDetail") || "")] }) });
+    const template = templates.find((item) => item.name === selectedTemplate);
+    const bodyParameters = Array.from({ length: template?.parameterCount || 0 }, (_, index) => index === 0 ? "{{name}}" : String(form.get(`parameter${index + 1}`) || ""));
+    const response = await fetch("/api/whatsapp/campaigns", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: form.get("name"), templateName: selectedTemplate, language: template?.language || "en_US", leadIds: optedInSelected, bodyParameters }) });
     const data = await response.json();
     if (!response.ok) { setBusy(false); return setNotice(data.error || "Campaign could not be created"); }
     let done = false; let progress = { sent: 0, failed: 0, total: data.campaign.total };
@@ -119,7 +127,7 @@ export default function WhatsAppView({ privileged }: { privileged: boolean }) {
       {showImport && <div className="wa-import"><header><span><strong>Bulk import campaign contacts</strong><small>CSV columns or pasted lines: Name, Phone</small></span><button onClick={() => setShowImport(false)} aria-label="Close import"><X size={16}/></button></header><div><label>Paste name and phone<textarea value={importText} onChange={(event) => setImportText(event.target.value)} placeholder={"Name, Phone\nAayush Shrestha, 9841280991\nSita Rai, 9800000000"}/></label><label className="wa-file"><Upload size={18}/><span>Upload CSV file<small>The first two columns must be Name and Phone.</small></span><input type="file" accept=".csv,text/csv,.txt" onChange={(event) => { const file = event.target.files?.[0]; if (file) file.text().then(setImportText); }}/></label></div><label className="wa-consent"><input type="checkbox" checked={consentConfirmed} onChange={(event) => setConsentConfirmed(event.target.checked)}/><span>I confirm these students agreed to receive WhatsApp messages from AIMS Global. The CRM will store this consent source.</span></label><footer><span>{parseImport().length} valid row(s) detected</span><button className="primary" disabled={busy || !consentConfirmed || !parseImport().length} onClick={() => void importContacts()}>{busy ? "Importing…" : "Import and select students"}</button></footer></div>}
       <div className="wa-campaign-grid">
         <div className="wa-audience"><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Filter students"/><div>{filtered.map((contact) => <label key={contact._id}><input type="checkbox" checked={checked.includes(String(contact._id))} onChange={() => toggle(String(contact._id))}/><span><strong>{contact.name}</strong><small>{contact.phone}</small></span><em className={contact.whatsappOptIn ? "yes" : "no"}>{contact.whatsappOptIn ? "Opted in" : "No consent"}</em></label>)}</div><footer><button className="secondary" disabled={busy} onClick={() => void recordConsent(true)}>Record opt-in</button><button className="secondary" disabled={busy} onClick={() => void recordConsent(false)}>Opt out</button></footer></div>
-        <form className="wa-campaign-form" onSubmit={createCampaign}><label>Campaign name<input required name="name" placeholder="India scholarship – September"/></label><label>Approved Meta template name<input required name="templateName" pattern="[a-z0-9_]+" placeholder="india_scholarship_event"/></label><div><label>Language code<input required name="language" defaultValue="en"/></label><label>Event date/detail<input required name="eventDetail" placeholder="5 October, 11 AM"/></label></div><div className="wa-estimate"><strong>{optedInSelected.length} recipients selected</strong><span>Estimated Meta marketing fee: ≈ NPR {(optedInSelected.length * 13.87).toLocaleString("en-NP", { maximumFractionDigits: 0 })}</span><small>Estimate only; Meta bills by recipient country and delivered message.</small></div><button className="primary" disabled={busy || !configured || !optedInSelected.length}><Send size={16}/>{busy ? "Sending…" : "Create and send campaign"}</button></form>
+        <form className="wa-campaign-form" onSubmit={createCampaign}><label>Campaign name<input required name="name" placeholder="WhatsApp test campaign"/></label><label>Approved Meta template<select required value={selectedTemplate} onChange={(event) => setSelectedTemplate(event.target.value)}><option value="">Select approved template</option>{templates.map((template) => <option key={`${template.name}-${template.language}`} value={template.name}>{template.name} · {template.category} · {template.language}</option>)}</select></label>{Array.from({ length: Math.max(0, (templates.find((item) => item.name === selectedTemplate)?.parameterCount || 0) - 1) }, (_, index) => <label key={index}>Template value {index + 2}<input required name={`parameter${index + 2}`} placeholder={`Value for {{${index + 2}}}`}/></label>)}{(templates.find((item) => item.name === selectedTemplate)?.parameterCount || 0) > 0 && <small>Variable {"{{1}}"} uses each selected student's CRM name automatically.</small>}<div className="wa-estimate"><strong>{optedInSelected.length} recipients selected</strong><span>Estimated Meta marketing fee: ≈ NPR {(optedInSelected.length * 13.87).toLocaleString("en-NP", { maximumFractionDigits: 0 })}</span><small>Estimate only; Meta bills by recipient country and delivered message.</small></div><button className="primary" disabled={busy || !configured || !optedInSelected.length || !selectedTemplate}><Send size={16}/>{busy ? "Sending…" : "Create and send campaign"}</button></form>
       </div>
       {!!campaigns.length && <div className="wa-campaign-history"><h3>Recent campaigns</h3>{campaigns.map((campaign) => <div key={campaign._id}><span><strong>{campaign.name}</strong><small>{new Date(campaign.createdAt).toLocaleString("en-NP")}</small></span><b>{campaign.status}</b><em>{campaign.sent}/{campaign.total} sent · {campaign.failed} failed</em></div>)}</div>}
     </section>}
