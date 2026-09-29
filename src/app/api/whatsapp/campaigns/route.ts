@@ -4,6 +4,7 @@ import { connectMongo } from "@/lib/mongodb";
 import { isPrivileged, requireSameOrigin, requireSession } from "@/lib/api-security";
 import { Lead } from "@/models/Lead";
 import { WhatsAppCampaign } from "@/models/WhatsAppCampaign";
+import { WhatsAppMessage } from "@/models/WhatsAppMessage";
 import { normalizeWhatsAppPhone, whatsappConfigured } from "@/lib/whatsapp";
 
 const createSchema = z.object({
@@ -14,11 +15,27 @@ const createSchema = z.object({
   bodyParameters: z.array(z.string().trim().max(500)).max(10).default([]),
 }).strict();
 
+type CampaignRecord = { recipients: Array<{ messageId?: string }>; sent: number; [key: string]: unknown };
+type DeliveryReceipt = { waMessageId: string; status: string; error?: string };
+
 export async function GET(request: NextRequest) {
   const session = await requireSession(request); if (session instanceof NextResponse) return session;
   if (!isPrivileged(session.role)) return NextResponse.json({ error: "Not authorized" }, { status: 403 });
-  await connectMongo(); const campaigns = await WhatsAppCampaign.find().sort({ createdAt: -1 }).limit(30).select("-recipients").lean();
-  return NextResponse.json({ campaigns, configured: whatsappConfigured() });
+  await connectMongo();
+  const campaigns = await WhatsAppCampaign.find().sort({ createdAt: -1 }).limit(30).lean() as unknown as CampaignRecord[];
+  const messageIds = campaigns.flatMap((campaign) => campaign.recipients.map((recipient) => recipient.messageId).filter((id): id is string => Boolean(id)));
+  const deliveryReceipts = await WhatsAppMessage.find({ waMessageId: { $in: messageIds } }).select("waMessageId status error").lean() as unknown as DeliveryReceipt[];
+  const receiptById = new Map(deliveryReceipts.map((receipt) => [receipt.waMessageId, receipt]));
+  const result = campaigns.map((campaign) => {
+    const receipts = campaign.recipients.map((recipient) => recipient.messageId ? receiptById.get(recipient.messageId) : undefined).filter((receipt): receipt is DeliveryReceipt => Boolean(receipt));
+    const delivered = receipts.filter((receipt) => receipt?.status === "delivered" || receipt?.status === "read").length;
+    const read = receipts.filter((receipt) => receipt?.status === "read").length;
+    const deliveryFailed = receipts.filter((receipt) => receipt?.status === "failed").length;
+    const lastDeliveryError = receipts.find((receipt) => receipt?.status === "failed" && receipt.error)?.error || "";
+    const { recipients: _recipients, ...summary } = campaign;
+    return { ...summary, accepted: campaign.sent, delivered, read, deliveryFailed, lastDeliveryError };
+  });
+  return NextResponse.json({ campaigns: result, configured: whatsappConfigured() });
 }
 
 export async function POST(request: NextRequest) {

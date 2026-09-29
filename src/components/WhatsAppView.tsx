@@ -5,7 +5,7 @@ import { Check, MessageCircle, RefreshCw, Send, ShieldCheck, Upload, X } from "l
 
 type Contact = { _id: string; name: string; phone: string; whatsappOptIn?: boolean };
 type Message = { _id: string; leadId?: string; direction: "inbound" | "outbound"; body: string; status: string; occurredAt: string };
-type Campaign = { _id: string; name: string; status: string; total: number; sent: number; failed: number; createdAt: string };
+type Campaign = { _id: string; name: string; status: string; total: number; sent: number; failed: number; accepted?: number; delivered?: number; read?: number; deliveryFailed?: number; lastDeliveryError?: string; createdAt: string };
 type Template = { name: string; language: string; category: string; parameterCount: number };
 
 export default function WhatsAppView({ privileged }: { privileged: boolean }) {
@@ -87,7 +87,7 @@ export default function WhatsAppView({ privileged }: { privileged: boolean }) {
       if (!processResponse.ok) { setBusy(false); return setNotice(result.error || "Campaign paused"); }
       done = result.done; progress = result; setNotice(`Sending: ${result.sent + result.failed}/${result.total}`);
     }
-    setBusy(false); setChecked([]); setNotice(`Campaign completed: ${progress.sent} sent, ${progress.failed} failed.`); await load();
+    setBusy(false); setChecked([]); setNotice(`Campaign submitted: ${progress.sent} accepted by Meta, ${progress.failed} rejected immediately. Delivery receipts may take a moment.`); await load();
   }
   function parseImport() {
     return importText.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => {
@@ -129,7 +129,7 @@ export default function WhatsAppView({ privileged }: { privileged: boolean }) {
         <div className="wa-audience"><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Filter students"/><div>{filtered.map((contact) => <label key={contact._id}><input type="checkbox" checked={checked.includes(String(contact._id))} onChange={() => toggle(String(contact._id))}/><span><strong>{contact.name}</strong><small>{contact.phone}</small></span><em className={contact.whatsappOptIn ? "yes" : "no"}>{contact.whatsappOptIn ? "Opted in" : "No consent"}</em></label>)}</div><footer><button className="secondary" disabled={busy} onClick={() => void recordConsent(true)}>Record opt-in</button><button className="secondary" disabled={busy} onClick={() => void recordConsent(false)}>Opt out</button></footer></div>
         <form className="wa-campaign-form" onSubmit={createCampaign}><label>Campaign name<input required name="name" placeholder="WhatsApp test campaign"/></label><label>Approved Meta template<select required value={selectedTemplate} onChange={(event) => setSelectedTemplate(event.target.value)}><option value="">Select approved template</option>{templates.map((template) => <option key={`${template.name}-${template.language}`} value={template.name}>{template.name} · {template.category} · {template.language}</option>)}</select></label>{Array.from({ length: Math.max(0, (templates.find((item) => item.name === selectedTemplate)?.parameterCount || 0) - 1) }, (_, index) => <label key={index}>Template value {index + 2}<input required name={`parameter${index + 2}`} placeholder={`Value for {{${index + 2}}}`}/></label>)}{(templates.find((item) => item.name === selectedTemplate)?.parameterCount || 0) > 0 && <small>Variable {"{{1}}"} uses each selected student's CRM name automatically.</small>}<div className="wa-estimate"><strong>{optedInSelected.length} recipients selected</strong><span>Estimated Meta marketing fee: ≈ NPR {(optedInSelected.length * 13.87).toLocaleString("en-NP", { maximumFractionDigits: 0 })}</span><small>Estimate only; Meta bills by recipient country and delivered message.</small></div><button className="primary" disabled={busy || !configured || !optedInSelected.length || !selectedTemplate}><Send size={16}/>{busy ? "Sending…" : "Create and send campaign"}</button></form>
       </div>
-      {!!campaigns.length && <div className="wa-campaign-history"><h3>Recent campaigns</h3>{campaigns.map((campaign) => <div key={campaign._id}><span><strong>{campaign.name}</strong><small>{new Date(campaign.createdAt).toLocaleString("en-NP")}</small></span><b>{campaign.status}</b><em>{campaign.sent}/{campaign.total} sent · {campaign.failed} failed</em></div>)}</div>}
+      {!!campaigns.length && <div className="wa-campaign-history"><h3>Recent campaigns</h3>{campaigns.map((campaign) => <div key={campaign._id}><span><strong>{campaign.name}</strong><small>{new Date(campaign.createdAt).toLocaleString("en-NP")}{campaign.lastDeliveryError ? ` · ${campaign.lastDeliveryError}` : ""}</small></span><b>{campaign.status}</b><em>{campaign.accepted ?? campaign.sent}/{campaign.total} Meta accepted · {campaign.delivered ?? 0} delivered · {(campaign.deliveryFailed ?? 0) + campaign.failed} failed</em></div>)}</div>}
     </section>}
   </div>;
 }
