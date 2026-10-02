@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { rateLimit, requireSameOrigin, requireSession } from "@/lib/api-security";
+import { whatsappTemplateAccountId } from "@/lib/whatsapp";
 
 type MetaEdge = "phone_numbers" | "message_templates" | "subscribed_apps";
 type MetaPhone = { id?: string; display_phone_number?: string };
 type MetaTemplate = { status?: string };
-type MetaApp = { id?: string; name?: string; whatsapp_business_api_data?: { id?: string; name?: string } };
+type MetaApp = { id?: string; name?: string; override_callback_uri?: string; whatsapp_business_api_data?: { id?: string; name?: string } };
 type MetaPage<T> = {
   data?: T[];
   paging?: { next?: string; cursors?: { after?: string } };
@@ -70,7 +71,11 @@ function accountConfig(accountId?: string | null) {
   const configuredAccountId = process.env.WHATSAPP_BUSINESS_ACCOUNT_ID || "";
   const selected = accountId ?? configuredAccountId;
   if (!numericId.test(selected)) return null;
-  return { accountId: selected, phoneId: process.env.WHATSAPP_PHONE_NUMBER_ID || "" };
+  const templateAccountId = accountId ?? whatsappTemplateAccountId();
+  return {
+    accountId: selected, phoneId: process.env.WHATSAPP_PHONE_NUMBER_ID || "",
+    templateAccountId: numericId.test(templateAccountId) ? templateAccountId : "",
+  };
 }
 
 function subscriptionUrl(accountId: string) {
@@ -78,22 +83,26 @@ function subscriptionUrl(accountId: string) {
 }
 
 function appSummaries(apps: MetaApp[]) {
-  return apps.map((app) => ({ id: app.whatsapp_business_api_data?.id || app.id || "", name: app.whatsapp_business_api_data?.name || app.name || "" }))
+  return apps.map((app) => {
+    let overrideCallbackUri: string | undefined;
+    try {
+      const url = new URL(app.override_callback_uri || "");
+      if (url.protocol === "https:" || url.protocol === "http:") overrideCallbackUri = `${url.origin}${url.pathname}`;
+    } catch { /* No callback override was configured. */ }
+    return {
+      id: app.whatsapp_business_api_data?.id || app.id || "",
+      name: app.whatsapp_business_api_data?.name || app.name || "",
+      ...(overrideCallbackUri ? { overrideCallbackUri } : {}),
+    };
+  })
     .filter((app) => app.id && app.name);
 }
 
-export async function GET(request: NextRequest) {
-  const session = await requireSession(request); if (session instanceof NextResponse) return session;
-  if (session.role !== "super_admin") return NextResponse.json({ error: "Super administrator access required" }, { status: 403 });
-  const requestedId = request.nextUrl.searchParams.get("accountId");
-  if (requestedId !== null && !numericId.test(requestedId)) return NextResponse.json({ error: "Invalid WhatsApp account ID" }, { status: 400 });
-  const config = accountConfig(requestedId);
-  if (!config || !process.env.WHATSAPP_ACCESS_TOKEN) return NextResponse.json({ error: "WhatsApp setup is incomplete" }, { status: 503 });
-
+async function diagnoseAccount(accountId: string, phoneId: string) {
   const [phoneResult, appResult, templateResult] = await Promise.allSettled([
-    metaCollection<MetaPhone>(config.accountId, "phone_numbers", "id,display_phone_number"),
-    metaCollection<MetaApp>(config.accountId, "subscribed_apps", ""),
-    metaCollection<MetaTemplate>(config.accountId, "message_templates", "status"),
+    metaCollection<MetaPhone>(accountId, "phone_numbers", "id,display_phone_number"),
+    metaCollection<MetaApp>(accountId, "subscribed_apps", ""),
+    metaCollection<MetaTemplate>(accountId, "message_templates", "status"),
   ]);
   const errors: { phones?: string; subscriptions?: string; templates?: string } = {};
   if (phoneResult.status === "rejected") errors.phones = safeError(phoneResult.reason);
@@ -109,11 +118,42 @@ export async function GET(request: NextRequest) {
     counts[status] = (counts[status] || 0) + 1;
     return counts;
   }, {});
-  return NextResponse.json({
-    accountId: config.accountId, phoneId: config.phoneId,
-    phoneMatches: phones.some((phone) => phone.id === config.phoneId),
-    phones, subscribedApps, subscriptionRecordCount: appResult.status === "fulfilled" ? appResult.value.length : 0,
+  return {
+    accountId, phoneMatches: phones.some((phone) => phone.id === phoneId), phones,
+    subscribedApps, subscriptionRecordCount: appResult.status === "fulfilled" ? appResult.value.length : 0,
     templateCount: templates.length, templateStatuses, errors,
+  };
+}
+
+export async function GET(request: NextRequest) {
+  const session = await requireSession(request); if (session instanceof NextResponse) return session;
+  if (session.role !== "super_admin") return NextResponse.json({ error: "Super administrator access required" }, { status: 403 });
+  const requestedId = request.nextUrl.searchParams.get("accountId");
+  if (requestedId !== null && !numericId.test(requestedId)) return NextResponse.json({ error: "Invalid WhatsApp account ID" }, { status: 400 });
+  const config = accountConfig(requestedId);
+  if (!config || !process.env.WHATSAPP_ACCESS_TOKEN) return NextResponse.json({ error: "WhatsApp setup is incomplete" }, { status: 503 });
+
+  const phoneAccountPromise = diagnoseAccount(config.accountId, config.phoneId);
+  const templateAccountPromise = config.templateAccountId === config.accountId
+    ? phoneAccountPromise
+    : config.templateAccountId
+      ? diagnoseAccount(config.templateAccountId, config.phoneId)
+      : Promise.resolve(null);
+  const [phoneAccount, templateAccount] = await Promise.all([phoneAccountPromise, templateAccountPromise]);
+  const errors = {
+    ...(phoneAccount.errors.phones ? { phones: phoneAccount.errors.phones } : {}),
+    ...(phoneAccount.errors.subscriptions ? { subscriptions: phoneAccount.errors.subscriptions } : {}),
+    ...(templateAccount?.errors.templates ? { templates: templateAccount.errors.templates } : {}),
+    ...(!templateAccount ? { templates: "Template account ID is not configured correctly." } : {}),
+  };
+  return NextResponse.json({
+    accountId: config.accountId, phoneId: config.phoneId, templateAccountId: config.templateAccountId,
+    phoneMatches: phoneAccount.phoneMatches,
+    phones: phoneAccount.phones, subscribedApps: phoneAccount.subscribedApps,
+    subscriptionRecordCount: phoneAccount.subscriptionRecordCount,
+    templateCount: templateAccount?.templateCount || 0,
+    templateStatuses: templateAccount?.templateStatuses || {}, errors,
+    ...(templateAccount && templateAccount.accountId !== config.accountId ? { templateAccountDiagnostics: templateAccount } : {}),
   });
 }
 

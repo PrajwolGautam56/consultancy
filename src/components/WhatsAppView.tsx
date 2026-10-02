@@ -9,7 +9,9 @@ type Message = { _id: string; leadId?: string | null; waId?: string; direction: 
 type Conversation = { conversationId: string; lastMessage: Message };
 type Campaign = { _id: string; name: string; status: string; total: number; sent: number; failed: number; accepted?: number; delivered?: number; read?: number; deliveryFailed?: number; lastDeliveryError?: string; createdAt: string };
 type Template = { name: string; language: string; category: string; parameterCount: number; body?: string };
-type WhatsAppSetup = { accountId: string; phoneId: string; phoneMatches: boolean; phones: Array<{ id: string; displayPhoneNumber: string }>; subscribedApps: Array<{ id: string; name: string }>; templateCount: number; errors: { phones?: string; subscriptions?: string; templates?: string } };
+type SetupApp = { id: string; name: string; overrideCallbackUri?: string };
+type AccountDiagnostics = { accountId: string; subscribedApps: SetupApp[]; errors: { phones?: string; subscriptions?: string; templates?: string } };
+type WhatsAppSetup = { accountId: string; phoneId: string; templateAccountId?: string; phoneMatches: boolean; phones: Array<{ id: string; displayPhoneNumber: string }>; subscribedApps: SetupApp[]; templateAccountDiagnostics?: AccountDiagnostics; templateCount: number; errors: { phones?: string; subscriptions?: string; templates?: string } };
 
 function messageConversationId(message: Message) {
   return message.leadId ? String(message.leadId) : message.waId ? `wa:${message.waId}` : "";
@@ -403,9 +405,11 @@ export default function WhatsAppView({ privileged, superAdmin = false }: { privi
       {setupError && <p className="wa-template-error" role="alert"><AlertCircle size={16}/>{setupError}</p>}
       {!setup && !setupError && <p>Checking Meta connection…</p>}
       {setup && <>
-        <p><strong>Phone:</strong> {setup.phoneMatches ? "Connected to the configured business account" : "Phone number does not belong to the configured business account"}</p>
-        <p><strong>Meta app subscriptions:</strong> {setup.subscribedApps.length ? setup.subscribedApps.map((app) => app.name || app.id).join(", ") : "None yet"}</p>
+        <p><strong>Phone account:</strong> {setup.phoneMatches ? "Connected" : "Phone number does not belong to this account"} · {setup.accountId}</p>
+        <p><strong>Phone-account subscriptions:</strong> {setup.subscribedApps.length ? setup.subscribedApps.map((app) => app.name || app.id).join(", ") : "None yet"}</p>
+        {setup.templateAccountDiagnostics && <p><strong>Template account:</strong> {setup.templateAccountDiagnostics.accountId} · {setup.templateAccountDiagnostics.errors.subscriptions ? "Subscription access could not be verified" : setup.templateAccountDiagnostics.subscribedApps.length ? `Subscribed: ${setup.templateAccountDiagnostics.subscribedApps.map((app) => app.name || app.id).join(", ")}` : "No app subscription found"}</p>}
         <p><strong>Approved templates:</strong> {setup.templateCount}</p>
+        {[...setup.subscribedApps, ...(setup.templateAccountDiagnostics?.subscribedApps || [])].filter((app) => app.overrideCallbackUri).map((app) => <p key={`${app.id}-${app.overrideCallbackUri}`}><strong>{app.name || app.id} callback override:</strong> {app.overrideCallbackUri}</p>)}
         {Object.entries(setup.errors).map(([key, value]) => value && <p className="wa-setup-error" key={key}>{key}: {value}</p>)}
         {!setup.phoneMatches && <p className="wa-setup-error">Check WHATSAPP_BUSINESS_ACCOUNT_ID in Vercel before subscribing. The configured phone and account must match.</p>}
       </>}

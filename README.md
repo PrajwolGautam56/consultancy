@@ -27,7 +27,7 @@ The implemented trial covers live dashboard metrics, lead/student directory, sea
 
 ## WhatsApp Cloud API
 
-The CRM includes a shared WhatsApp inbox, explicit consent records, approved-template campaigns, delivery/read webhooks, cost estimates, and controlled campaign batches. Configure the `WHATSAPP_*` and `META_*` values from `.env.example`, then register `https://YOUR_DOMAIN/api/whatsapp/webhook` for the `messages` webhook field in the Meta App dashboard. Use a permanent system-user token in production; never expose it to the browser.
+The CRM includes a shared WhatsApp inbox, explicit consent records, approved-template campaigns, delivery/read webhooks, cost estimates, and controlled campaign batches. Configure the `WHATSAPP_*` and `META_*` values from `.env.example`, then register `https://YOUR_DOMAIN/api/whatsapp/webhook` for the `messages` webhook field in the Meta App dashboard. `WHATSAPP_BUSINESS_ACCOUNT_ID` is the WABA containing the configured phone number and receiving its webhook subscription. If approved templates belong to another WABA, set `WHATSAPP_TEMPLATE_ACCOUNT_ID` to that WABA ID; otherwise leave it empty to use `WHATSAPP_BUSINESS_ACCOUNT_ID`. The super administrator's WhatsApp setup diagnostics show both accounts and any callback override. Use a permanent system-user token in production; never expose it to the browser.
 
 Review [SECURITY.md](./SECURITY.md) before any public deployment.
 

@@ -39,13 +39,17 @@ export type ApprovedWhatsAppTemplate = {
   name: string; language: string; category: string; parameterCount: number; body: string;
 };
 
-let templateCache: { expiresAt: number; templates: ApprovedWhatsAppTemplate[] } | null = null;
+let templateCache: { accountId: string; expiresAt: number; templates: ApprovedWhatsAppTemplate[] } | null = null;
+
+export function whatsappTemplateAccountId() {
+  return process.env.WHATSAPP_TEMPLATE_ACCOUNT_ID?.trim() || process.env.WHATSAPP_BUSINESS_ACCOUNT_ID?.trim() || "";
+}
 
 export async function getApprovedWhatsAppTemplates(): Promise<ApprovedWhatsAppTemplate[]> {
-  if (templateCache && templateCache.expiresAt > Date.now()) return templateCache.templates;
   const token = process.env.WHATSAPP_ACCESS_TOKEN;
-  const accountId = process.env.WHATSAPP_BUSINESS_ACCOUNT_ID;
-  if (!token || !accountId) throw new Error("WhatsApp templates are not configured");
+  const accountId = whatsappTemplateAccountId();
+  if (!token || !/^\d{5,30}$/.test(accountId)) throw new Error("WhatsApp templates are not configured");
+  if (templateCache?.accountId === accountId && templateCache.expiresAt > Date.now()) return templateCache.templates;
   const version = process.env.META_GRAPH_API_VERSION || "v26.0";
   const response = await fetch(`https://graph.facebook.com/${version}/${accountId}/message_templates?fields=name,status,category,language,components&limit=100`, {
     headers: { Authorization: `Bearer ${token}` }, cache: "no-store",
@@ -60,7 +64,7 @@ export async function getApprovedWhatsAppTemplates(): Promise<ApprovedWhatsAppTe
     const parameterCount = Math.max(0, ...Array.from(body.matchAll(/\{\{(\d+)\}\}/g), (match) => Number(match[1])));
     return { name: item.name, language: item.language, category: item.category, parameterCount, body };
   });
-  templateCache = { expiresAt: Date.now() + 60_000, templates };
+  templateCache = { accountId, expiresAt: Date.now() + 60_000, templates };
   return templates;
 }
 
