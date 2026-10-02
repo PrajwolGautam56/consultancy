@@ -4,7 +4,7 @@ import { rateLimit, requireSameOrigin, requireSession } from "@/lib/api-security
 type MetaEdge = "phone_numbers" | "message_templates" | "subscribed_apps";
 type MetaPhone = { id?: string; display_phone_number?: string };
 type MetaTemplate = { status?: string };
-type MetaApp = { id?: string; name?: string };
+type MetaApp = { id?: string; name?: string; whatsapp_business_api_data?: { id?: string; name?: string } };
 type MetaPage<T> = {
   data?: T[];
   paging?: { next?: string; cursors?: { after?: string } };
@@ -52,7 +52,7 @@ async function metaCollection<T>(accountId: string, edge: MetaEdge, fields: stri
   let after: string | undefined;
   for (let page = 0; page < 20; page += 1) {
     const url = new URL(`https://graph.facebook.com/${graphVersion()}/${accountId}/${edge}`);
-    url.searchParams.set("fields", fields);
+    if (fields) url.searchParams.set("fields", fields);
     url.searchParams.set("limit", "100");
     if (after) url.searchParams.set("after", after);
     const result = await metaRequest<T>(url);
@@ -77,6 +77,11 @@ function subscriptionUrl(accountId: string) {
   return new URL(`https://graph.facebook.com/${graphVersion()}/${accountId}/subscribed_apps`);
 }
 
+function appSummaries(apps: MetaApp[]) {
+  return apps.map((app) => ({ id: app.whatsapp_business_api_data?.id || app.id || "", name: app.whatsapp_business_api_data?.name || app.name || "" }))
+    .filter((app) => app.id && app.name);
+}
+
 export async function GET(request: NextRequest) {
   const session = await requireSession(request); if (session instanceof NextResponse) return session;
   if (session.role !== "super_admin") return NextResponse.json({ error: "Super administrator access required" }, { status: 403 });
@@ -87,7 +92,7 @@ export async function GET(request: NextRequest) {
 
   const [phoneResult, appResult, templateResult] = await Promise.allSettled([
     metaCollection<MetaPhone>(config.accountId, "phone_numbers", "id,display_phone_number"),
-    metaCollection<MetaApp>(config.accountId, "subscribed_apps", "id,name"),
+    metaCollection<MetaApp>(config.accountId, "subscribed_apps", ""),
     metaCollection<MetaTemplate>(config.accountId, "message_templates", "status"),
   ]);
   const errors: { phones?: string; subscriptions?: string; templates?: string } = {};
@@ -97,9 +102,7 @@ export async function GET(request: NextRequest) {
   const phones = phoneResult.status === "fulfilled"
     ? phoneResult.value.filter((phone): phone is Required<MetaPhone> => Boolean(phone.id && phone.display_phone_number)).map((phone) => ({ id: phone.id, displayPhoneNumber: phone.display_phone_number }))
     : [];
-  const subscribedApps = appResult.status === "fulfilled"
-    ? appResult.value.filter((app): app is Required<MetaApp> => Boolean(app.id && app.name)).map((app) => ({ id: app.id, name: app.name }))
-    : [];
+  const subscribedApps = appResult.status === "fulfilled" ? appSummaries(appResult.value) : [];
   const templates = templateResult.status === "fulfilled" ? templateResult.value : [];
   const templateStatuses = templates.reduce<Record<string, number>>((counts, template) => {
     const status = typeof template.status === "string" ? template.status : "UNKNOWN";
@@ -109,7 +112,8 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({
     accountId: config.accountId, phoneId: config.phoneId,
     phoneMatches: phones.some((phone) => phone.id === config.phoneId),
-    phones, subscribedApps, templateCount: templates.length, templateStatuses, errors,
+    phones, subscribedApps, subscriptionRecordCount: appResult.status === "fulfilled" ? appResult.value.length : 0,
+    templateCount: templates.length, templateStatuses, errors,
   });
 }
 
@@ -142,8 +146,8 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const apps = await metaCollection<MetaApp>(config.accountId, "subscribed_apps", "id,name");
-    const subscribedApps = apps.filter((app): app is Required<MetaApp> => Boolean(app.id && app.name)).map((app) => ({ id: app.id, name: app.name }));
+    const apps = await metaCollection<MetaApp>(config.accountId, "subscribed_apps", "");
+    const subscribedApps = appSummaries(apps);
     return NextResponse.json({ success: true, subscribedApps });
   } catch (error) {
     return NextResponse.json({ success: true, subscribedApps: [], warning: safeError(error) });
