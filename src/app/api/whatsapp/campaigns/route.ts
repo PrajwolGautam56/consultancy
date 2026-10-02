@@ -5,7 +5,7 @@ import { isPrivileged, requireSameOrigin, requireSession } from "@/lib/api-secur
 import { Lead } from "@/models/Lead";
 import { WhatsAppCampaign } from "@/models/WhatsAppCampaign";
 import { WhatsAppMessage } from "@/models/WhatsAppMessage";
-import { normalizeWhatsAppPhone, whatsappConfigured } from "@/lib/whatsapp";
+import { getApprovedWhatsAppTemplates, normalizeWhatsAppPhone, whatsappConfigured } from "@/lib/whatsapp";
 
 const createSchema = z.object({
   name: z.string().trim().min(2).max(120),
@@ -33,6 +33,7 @@ export async function GET(request: NextRequest) {
     const deliveryFailed = receipts.filter((receipt) => receipt?.status === "failed").length;
     const lastDeliveryError = receipts.find((receipt) => receipt?.status === "failed" && receipt.error)?.error || "";
     const { recipients: _recipients, ...summary } = campaign;
+    void _recipients;
     return { ...summary, accepted: campaign.sent, delivered, read, deliveryFailed, lastDeliveryError };
   });
   return NextResponse.json({ campaigns: result, configured: whatsappConfigured() });
@@ -44,9 +45,17 @@ export async function POST(request: NextRequest) {
   if (!requireSameOrigin(request)) return NextResponse.json({ error: "Invalid request origin" }, { status: 403 });
   if (!whatsappConfigured()) return NextResponse.json({ error: "Add the WhatsApp Cloud API environment variables first" }, { status: 503 });
   const parsed = createSchema.safeParse(await request.json()); if (!parsed.success) return NextResponse.json({ error: "Invalid campaign details" }, { status: 400 });
+  let template;
+  try {
+    template = (await getApprovedWhatsAppTemplates()).find((item) => item.name === parsed.data.templateName && item.language === parsed.data.language);
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Could not verify the Meta template" }, { status: 502 });
+  }
+  if (!template) return NextResponse.json({ error: "This template is not approved in the configured Meta WABA" }, { status: 409 });
+  if (parsed.data.bodyParameters.length !== template.parameterCount) return NextResponse.json({ error: `This template needs ${template.parameterCount} body value(s)` }, { status: 400 });
   await connectMongo();
   const leads = await Lead.find({ _id: { $in: parsed.data.leadIds }, archivedAt: null, whatsappOptIn: true, whatsappOptOutAt: null }).select("name phone").lean();
   if (!leads.length) return NextResponse.json({ error: "None of the selected students has recorded WhatsApp consent" }, { status: 409 });
-  const campaign = await WhatsAppCampaign.create({ ...parsed.data, recipients: leads.map((lead) => ({ leadId: lead._id, name: lead.name, phone: normalizeWhatsAppPhone(lead.phone), status: "pending" })), total: leads.length, createdBy: session.userId, createdByName: session.name });
+  const campaign = await WhatsAppCampaign.create({ ...parsed.data, templateBody: template.body, recipients: leads.map((lead) => ({ leadId: lead._id, name: lead.name, phone: normalizeWhatsAppPhone(lead.phone), status: "pending" })), total: leads.length, createdBy: session.userId, createdByName: session.name });
   return NextResponse.json({ campaign: { _id: campaign._id, total: campaign.total, status: campaign.status } }, { status: 201 });
 }

@@ -12,6 +12,7 @@ const recipientSchema = new Schema({
 const whatsAppCampaignSchema = new Schema({
   name: { type: String, required: true, trim: true, maxlength: 120 },
   templateName: { type: String, required: true, trim: true, maxlength: 512 },
+  templateBody: { type: String, default: "", maxlength: 5000 },
   language: { type: String, required: true, default: "en", maxlength: 20 },
   bodyParameters: [{ type: String, maxlength: 500 }],
   status: { type: String, enum: ["ready", "processing", "completed", "failed"], default: "ready", index: true },
