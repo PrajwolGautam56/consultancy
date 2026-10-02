@@ -11,6 +11,6 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       error: error instanceof Error ? error.message : "Could not load Meta templates",
       accountId: process.env.WHATSAPP_BUSINESS_ACCOUNT_ID || "",
-    }, { status: 502 });
+    }, { status: 424 });
   }
 }

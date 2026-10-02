@@ -817,7 +817,7 @@ export default function Home() {
               selectLead={setSelected}
             />
           ) : active === "WhatsApp" ? (
-            <WhatsAppView privileged={["super_admin", "admin", "manager"].includes(currentUser?.role || "")} />
+            <WhatsAppView privileged={["super_admin", "admin", "manager"].includes(currentUser?.role || "")} superAdmin={currentUser?.role === "super_admin"} />
           ) : active === "Team" ? (
             <TeamView />
           ) : active === "Follow-ups" ? (

@@ -9,6 +9,7 @@ type Message = { _id: string; leadId?: string | null; waId?: string; direction: 
 type Conversation = { conversationId: string; lastMessage: Message };
 type Campaign = { _id: string; name: string; status: string; total: number; sent: number; failed: number; accepted?: number; delivered?: number; read?: number; deliveryFailed?: number; lastDeliveryError?: string; createdAt: string };
 type Template = { name: string; language: string; category: string; parameterCount: number; body?: string };
+type WhatsAppSetup = { accountId: string; phoneId: string; phoneMatches: boolean; phones: Array<{ id: string; displayPhoneNumber: string }>; subscribedApps: Array<{ id: string; name: string }>; templateCount: number; errors: { phones?: string; subscriptions?: string; templates?: string } };
 
 function messageConversationId(message: Message) {
   return message.leadId ? String(message.leadId) : message.waId ? `wa:${message.waId}` : "";
@@ -48,12 +49,14 @@ function MessageBody({ message }: { message: Message }) {
 }
 
 async function readApi<T>(response: Response): Promise<T> {
-  const data = await response.json();
+  let data: { error?: string } & T;
+  try { data = await response.json(); }
+  catch { throw new Error(`Service returned an unreadable response (${response.status}). Please retry or check connection health.`); }
   if (!response.ok) throw new Error(data?.error || `Request failed (${response.status})`);
   return data as T;
 }
 
-export default function WhatsAppView({ privileged }: { privileged: boolean }) {
+export default function WhatsAppView({ privileged, superAdmin = false }: { privileged: boolean; superAdmin?: boolean }) {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [recentMessages, setRecentMessages] = useState<Message[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -75,6 +78,9 @@ export default function WhatsAppView({ privileged }: { privileged: boolean }) {
   const [attachment, setAttachment] = useState<File | null>(null);
   const [notice, setNotice] = useState("");
   const [templateError, setTemplateError] = useState("");
+  const [setup, setSetup] = useState<WhatsAppSetup | null>(null);
+  const [setupError, setSetupError] = useState("");
+  const [setupBusy, setSetupBusy] = useState(false);
   const [inboxError, setInboxError] = useState("");
   const [threadError, setThreadError] = useState("");
   const [loadingInbox, setLoadingInbox] = useState(true);
@@ -132,12 +138,30 @@ export default function WhatsAppView({ privileged }: { privileged: boolean }) {
     if (results[1].status === "fulfilled") setCampaigns(results[1].value.campaigns || []);
   }, [privileged]);
 
+  const refreshSetup = useCallback(async () => {
+    if (!superAdmin) return;
+    try {
+      const data = await readApi<WhatsAppSetup>(await fetch("/api/whatsapp/setup", { cache: "no-store" }));
+      setSetup(data); setSetupError("");
+    } catch (error) { setSetupError(error instanceof Error ? error.message : "Connection status could not be loaded."); }
+  }, [superAdmin]);
+
+  async function connectWebhook() {
+    setSetupBusy(true); setSetupError("");
+    try {
+      await readApi<{ success: boolean }>(await fetch("/api/whatsapp/setup", { method: "POST" }));
+      await refreshSetup();
+      setNotice("The CRM app is subscribed to incoming WhatsApp webhooks. Send a new test message to verify delivery.");
+    } catch (error) { setSetupError(error instanceof Error ? error.message : "WhatsApp webhook could not be connected."); }
+    finally { setSetupBusy(false); }
+  }
+
   useEffect(() => {
     let alive = true;
-    queueMicrotask(() => { if (alive) { void refreshInbox(); void refreshMetadata(); } });
+    queueMicrotask(() => { if (alive) { void refreshInbox(); void refreshMetadata(); void refreshSetup(); } });
     const timer = window.setInterval(() => void refreshInbox(true), 15000);
     return () => { alive = false; window.clearInterval(timer); };
-  }, [refreshInbox, refreshMetadata]);
+  }, [refreshInbox, refreshMetadata, refreshSetup]);
 
   useEffect(() => {
     const tick = () => setNow(Date.now());
@@ -374,6 +398,19 @@ export default function WhatsAppView({ privileged }: { privileged: boolean }) {
         </> : <div className="wa-thread-state wa-thread-placeholder"><MessageCircle size={38}/><strong>Select a conversation</strong><span>Choose a chat or search your CRM contacts to open their WhatsApp history.</span></div>}
       </div>
     </section>
+
+    {superAdmin && <details className="panel wa-setup"><summary><ShieldCheck size={18}/> WhatsApp connection health</summary><div className="wa-setup-content">
+      {setupError && <p className="wa-template-error" role="alert"><AlertCircle size={16}/>{setupError}</p>}
+      {!setup && !setupError && <p>Checking Meta connection…</p>}
+      {setup && <>
+        <p><strong>Phone:</strong> {setup.phoneMatches ? "Connected to the configured business account" : "Phone number does not belong to the configured business account"}</p>
+        <p><strong>Meta app subscriptions:</strong> {setup.subscribedApps.length ? setup.subscribedApps.map((app) => app.name || app.id).join(", ") : "None yet"}</p>
+        <p><strong>Approved templates:</strong> {setup.templateCount}</p>
+        {Object.entries(setup.errors).map(([key, value]) => value && <p className="wa-setup-error" key={key}>{key}: {value}</p>)}
+        {!setup.phoneMatches && <p className="wa-setup-error">Check WHATSAPP_BUSINESS_ACCOUNT_ID in Vercel before subscribing. The configured phone and account must match.</p>}
+      </>}
+      <div className="wa-setup-actions"><button type="button" className="secondary" onClick={() => void refreshSetup()} disabled={setupBusy}>Refresh status</button><button type="button" className="primary" onClick={() => void connectWebhook()} disabled={setupBusy || !setup?.phoneMatches}>{setupBusy ? "Connecting…" : "Connect incoming messages"}</button></div>
+    </div></details>}
 
     {privileged && <section className="panel wa-campaign">
       <div className="task-toolbar"><span><h2>Bulk WhatsApp campaign</h2><p>Import a name and phone list or select existing opted-in CRM contacts.</p></span><button className="primary" type="button" onClick={() => setShowImport(true)}><Upload size={15}/> Import contacts</button></div>
