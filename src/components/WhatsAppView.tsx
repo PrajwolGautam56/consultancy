@@ -14,6 +14,9 @@ type AccountDiagnostics = { accountId: string; subscribedApps: SetupApp[]; error
 type WhatsAppSetup = { accountId: string; phoneId: string; templateAccountId?: string; phoneMatches: boolean; phones: Array<{ id: string; displayPhoneNumber: string }>; subscribedApps: SetupApp[]; templateAccountDiagnostics?: AccountDiagnostics; templateCount: number; errors: { phones?: string; subscriptions?: string; templates?: string } };
 type SetupConnectionResult = { success: boolean; error?: string; accounts?: Array<{ accountId: string; roles: string[]; phoneVerified: boolean; subscriptionAccepted: boolean; error?: string; warning?: string }> };
 type ContactGroup = { _id: string; name: string; description: string; color: "green" | "blue" | "violet" | "orange" | "rose"; memberIds: string[]; memberCount: number; updatedAt?: string };
+type ImportCell = string | number | boolean | Date | null;
+type ImportSheet = { sheet: string; data: ImportCell[][] };
+type ImportRow = { name: string; phone: string };
 
 function messageConversationId(message: Message) {
   return message.leadId ? String(message.leadId) : message.waId ? `wa:${message.waId}` : "";
@@ -38,6 +41,42 @@ function statusLabel(status: string) {
   if (status === "failed") return <><AlertCircle size={13} /> Failed</>;
   if (status === "queued") return <><Clock3 size={13} /> Queued</>;
   return status === "received" ? "Received" : status;
+}
+
+function importCellText(value: ImportCell) {
+  if (value === null || value === undefined) return "";
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  return String(value).trim();
+}
+
+function parseDelimitedText(text: string): ImportCell[][] {
+  return text.split(/\r?\n/).filter((line) => line.trim()).map((line) => {
+    const delimiter = line.includes("\t") ? "\t" : ",";
+    const cells: string[] = []; let value = ""; let quoted = false;
+    for (let index = 0; index < line.length; index += 1) {
+      const character = line[index];
+      if (character === '"' && quoted && line[index + 1] === '"') { value += '"'; index += 1; }
+      else if (character === '"') quoted = !quoted;
+      else if (character === delimiter && !quoted) { cells.push(value.trim()); value = ""; }
+      else value += character;
+    }
+    cells.push(value.trim()); return cells;
+  });
+}
+
+function detectImportMapping(data: ImportCell[][]) {
+  const headerRow = Math.max(0, data.slice(0, 15).reduce<{ index: number; score: number }>((best, row, index) => {
+    const score = row.reduce<number>((total, cell) => total + (/name|student|full.?name/i.test(importCellText(cell)) ? 2 : /phone|mobile|contact|whatsapp/i.test(importCellText(cell)) ? 2 : 0), 0);
+    return score > best.score ? { index, score } : best;
+  }, { index: 0, score: -1 }).index);
+  const headers = data[headerRow] || [];
+  const nameColumn = Math.max(0, headers.findIndex((cell) => /name|student/i.test(importCellText(cell))));
+  const detectedPhone = headers.findIndex((cell) => /phone|mobile|contact|whatsapp/i.test(importCellText(cell)));
+  return { headerRow, nameColumn, phoneColumn: detectedPhone >= 0 ? detectedPhone : nameColumn === 0 ? 1 : 0 };
+}
+
+function rowsFromImport(data: ImportCell[][], headerRow: number, nameColumn: number, phoneColumn: number): ImportRow[] {
+  return data.slice(headerRow + 1).map((row) => ({ name: importCellText(row[nameColumn]), phone: importCellText(row[phoneColumn]) })).filter((row) => row.name || row.phone).slice(0, 1000);
 }
 
 function MessageBody({ message }: { message: Message }) {
@@ -108,7 +147,16 @@ export default function WhatsAppView({ privileged, superAdmin = false }: { privi
   const [busy, setBusy] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [importText, setImportText] = useState("");
-  const [consentConfirmed, setConsentConfirmed] = useState(false);
+  const [importSheets, setImportSheets] = useState<ImportSheet[]>([]);
+  const [importSheetName, setImportSheetName] = useState("");
+  const [importHeaderRow, setImportHeaderRow] = useState(0);
+  const [importNameColumn, setImportNameColumn] = useState(0);
+  const [importPhoneColumn, setImportPhoneColumn] = useState(1);
+  const [importRows, setImportRows] = useState<ImportRow[]>([]);
+  const [importFileName, setImportFileName] = useState("");
+  const [importFileError, setImportFileError] = useState("");
+  const [importGroupId, setImportGroupId] = useState("");
+  const [consentConfirmed, setConsentConfirmed] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -260,6 +308,10 @@ export default function WhatsAppView({ privileged, superAdmin = false }: { privi
   const optedInSelected = checked.filter((id) => contacts.find((contact) => String(contact._id) === id)?.whatsappOptIn);
   const oneTemplate = templates.find((item) => item.name === selectedOneTemplate);
   const campaignTemplate = templates.find((item) => item.name === selectedTemplate);
+  const activeImportSheet = importSheets.find((sheet) => sheet.sheet === importSheetName);
+  const importHeaders = activeImportSheet?.data[importHeaderRow] || [];
+  const validImportRows = importRows.filter((row) => row.name.trim().length >= 2 && row.phone.replace(/\D/g, "").length >= 10 && row.phone.replace(/\D/g, "").length <= 15);
+  const invalidImportCount = importRows.length - validImportRows.length;
   const campaignBlockedReason = !configured
     ? "WhatsApp is not connected. Ask a super administrator to check the connection."
     : !optedInSelected.length
@@ -455,21 +507,69 @@ export default function WhatsAppView({ privileged, superAdmin = false }: { privi
   }
 
   function parseImport() {
-    return importText.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => {
-      const columns = line.split(line.includes("\t") ? "\t" : ",").map((value) => value.trim().replace(/^['"]|['"]$/g, ""));
-      return { name: columns[0] || "", phone: columns[1] || "" };
-    }).filter((contact, index) => contact.name && contact.phone && !(index === 0 && /name/i.test(contact.name) && /phone|mobile/i.test(contact.phone)));
+    const data = parseDelimitedText(importText);
+    if (!data.length) return [];
+    const mapping = detectImportMapping(data);
+    return rowsFromImport(data, mapping.headerRow, mapping.nameColumn, mapping.phoneColumn);
+  }
+
+  function configureImportSheet(sheetName: string, sheets = importSheets) {
+    const sheet = sheets.find((item) => item.sheet === sheetName);
+    if (!sheet) return;
+    const mapping = detectImportMapping(sheet.data);
+    setImportSheetName(sheetName); setImportHeaderRow(mapping.headerRow);
+    setImportNameColumn(mapping.nameColumn); setImportPhoneColumn(mapping.phoneColumn);
+    setImportRows(rowsFromImport(sheet.data, mapping.headerRow, mapping.nameColumn, mapping.phoneColumn));
+  }
+
+  function remapImport(headerRow = importHeaderRow, nameColumn = importNameColumn, phoneColumn = importPhoneColumn) {
+    if (!activeImportSheet) return;
+    setImportHeaderRow(headerRow); setImportNameColumn(nameColumn); setImportPhoneColumn(phoneColumn);
+    setImportRows(rowsFromImport(activeImportSheet.data, headerRow, nameColumn, phoneColumn));
+  }
+
+  async function loadImportFile(file?: File) {
+    if (!file) return;
+    if (file.size > 8 * 1024 * 1024) return setImportFileError("Choose a file smaller than 8 MB.");
+    setBusy(true); setImportFileError(""); setImportFileName(file.name);
+    try {
+      let sheets: ImportSheet[];
+      if (/\.xlsx$/i.test(file.name)) {
+        const { default: readXlsxFile } = await import("read-excel-file/browser");
+        sheets = (await readXlsxFile(file)) as ImportSheet[];
+      } else if (/\.(csv|txt)$/i.test(file.name)) {
+        sheets = [{ sheet: "Imported data", data: parseDelimitedText(await file.text()) }];
+      } else throw new Error("Upload an Excel .xlsx or CSV file.");
+      const usable = sheets.filter((sheet) => sheet.data.some((row) => row.some((cell) => importCellText(cell))));
+      if (!usable.length) throw new Error("The file does not contain any usable rows.");
+      setImportSheets(usable); configureImportSheet(usable[0].sheet, usable);
+    } catch (error) {
+      setImportSheets([]); setImportRows([]);
+      setImportFileError(error instanceof Error ? error.message : "The spreadsheet could not be read.");
+    } finally { setBusy(false); }
+  }
+
+  function usePastedImport() {
+    const parsed = parseImport();
+    if (!parsed.length) return setImportFileError("Paste Name and Phone values, one student per line.");
+    setImportSheets([]); setImportSheetName(""); setImportFileName("Pasted rows"); setImportRows(parsed); setImportFileError("");
+  }
+
+  function updateImportRow(index: number, field: keyof ImportRow, value: string) {
+    setImportRows((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, [field]: value } : row));
   }
 
   async function importContacts() {
-    const parsed = parseImport();
-    if (!parsed.length) return setNotice("Paste contacts as Name, Phone — one student per line.");
+    const parsed = validImportRows;
+    if (!parsed.length) return setNotice("Upload or paste contacts, then map the Name and Phone columns.");
     if (!consentConfirmed) return setNotice("Confirm that these students agreed to receive WhatsApp messages.");
     setBusy(true); setNotice(`Importing ${parsed.length} contacts…`);
     try {
-      const data = await readApi<{ total: number; created: number; matched: number; leadIds: string[] }>(await fetch("/api/whatsapp/import", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contacts: parsed, consentConfirmed: true, consentSource: "Bulk campaign list confirmed by administrator" }) }));
-      await refreshInbox(); setChecked(data.leadIds || []); setShowImport(false); setImportText(""); setConsentConfirmed(false);
-      setNotice(`${data.total} contacts ready and selected: ${data.created} new, ${data.matched} matched existing CRM records.`);
+      const data = await readApi<{ total: number; created: number; matched: number; leadIds: string[]; group?: { id: string; name: string } | null }>(await fetch("/api/whatsapp/import", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contacts: parsed, consentConfirmed: true, consentSource: "Imported consented student list", ...(importGroupId ? { groupId: importGroupId } : {}) }) }));
+      await Promise.all([refreshInbox(), refreshMetadata()]); setChecked(data.leadIds || []); setShowImport(false);
+      setImportText(""); setImportSheets([]); setImportRows([]); setImportFileName(""); setImportFileError(""); setConsentConfirmed(true);
+      if (data.group?.id) setAudienceGroup(data.group.id);
+      setNotice(`${data.total} contacts saved, opted in and selected: ${data.created} new, ${data.matched} matched.${data.group ? ` Added to “${data.group.name}”.` : ""}`);
     } catch (error) { setNotice(error instanceof Error ? error.message : "Contacts could not be imported."); }
     finally { setBusy(false); }
   }
@@ -560,7 +660,27 @@ export default function WhatsAppView({ privileged, superAdmin = false }: { privi
 
     {privileged && workspaceTab === "broadcasts" && <section className="panel wa-campaign">
       <div className="task-toolbar wa-broadcast-head"><span><h2>Send one message to many contacts</h2><p>Select all opted-in contacts or choose a saved group, then send one approved Meta template to everyone.</p></span><button className="primary" type="button" onClick={() => setShowImport(true)}><Upload size={15}/> Import contacts</button></div>
-      {showImport && <div className="wa-import"><header><span><strong>Bulk import campaign contacts</strong><small>CSV columns or pasted lines: Name, Phone</small></span><button type="button" onClick={() => setShowImport(false)} aria-label="Close import"><X size={16}/></button></header><div><label>Paste name and phone<textarea value={importText} onChange={(event) => setImportText(event.target.value)} placeholder={"Name, Phone\nAayush Shrestha, 9841280991\nSita Rai, 9800000000"}/></label><label className="wa-file"><Upload size={18}/><span>Upload CSV file<small>The first two columns must be Name and Phone.</small></span><input type="file" accept=".csv,text/csv,.txt" onChange={(event) => { const file = event.target.files?.[0]; if (file) void file.text().then(setImportText); }}/></label></div><label className="wa-consent"><input type="checkbox" checked={consentConfirmed} onChange={(event) => setConsentConfirmed(event.target.checked)}/><span>I confirm these students agreed to receive WhatsApp messages from AIMS Global. The CRM will store this consent source.</span></label><footer><span>{parseImport().length} valid row(s) detected</span><button type="button" className="primary" disabled={busy || !consentConfirmed || !parseImport().length} onClick={() => void importContacts()}>{busy ? "Importing…" : "Import and select students"}</button></footer></div>}
+      {showImport && <div className="wa-import wa-import-wizard">
+        <header><span><strong>Import students from Excel or CSV</strong><small>Choose the sheet, header row, Name column and Phone column before saving.</small></span><button type="button" onClick={() => setShowImport(false)} aria-label="Close import"><X size={16}/></button></header>
+        <div className="wa-import-source">
+          <label className="wa-file"><Upload size={20}/><span>{importFileName || "Upload Excel or CSV"}<small>.xlsx, .csv or tab-separated .txt · up to 1,000 contacts</small></span><input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.csv,text/csv,.txt,text/plain" onChange={(event) => void loadImportFile(event.target.files?.[0])}/></label>
+          <div className="wa-paste-import"><label>Or paste Name and Phone<textarea value={importText} onChange={(event) => setImportText(event.target.value)} placeholder={"Name, Phone\nAayush Shrestha, 9841280991\nSita Rai, 9800000000"}/></label><button type="button" onClick={usePastedImport}>Prepare pasted rows</button></div>
+        </div>
+        {importFileError && <div className="wa-import-error"><AlertCircle size={15}/>{importFileError}</div>}
+        {!!activeImportSheet && <div className="wa-import-mapping">
+          <label>Sheet<select value={importSheetName} onChange={(event) => configureImportSheet(event.target.value)}>{importSheets.map((sheet) => <option key={sheet.sheet} value={sheet.sheet}>{sheet.sheet}</option>)}</select></label>
+          <label>Header row<select value={importHeaderRow} onChange={(event) => remapImport(Number(event.target.value))}>{activeImportSheet.data.slice(0, 25).map((row, index) => <option key={index} value={index}>Row {index + 1}: {row.slice(0, 3).map(importCellText).filter(Boolean).join(" · ") || "Blank"}</option>)}</select></label>
+          <label>Name column<select value={importNameColumn} onChange={(event) => remapImport(importHeaderRow, Number(event.target.value), importPhoneColumn)}>{importHeaders.map((header, index) => <option key={index} value={index}>{importCellText(header) || `Column ${String.fromCharCode(65 + index)}`}</option>)}</select></label>
+          <label>Phone column<select value={importPhoneColumn} onChange={(event) => remapImport(importHeaderRow, importNameColumn, Number(event.target.value))}>{importHeaders.map((header, index) => <option key={index} value={index}>{importCellText(header) || `Column ${String.fromCharCode(65 + index)}`}</option>)}</select></label>
+          <label>Add to contact group<select value={importGroupId} onChange={(event) => setImportGroupId(event.target.value)}><option value="">No group — save to CRM only</option>{groups.map((group) => <option key={group._id} value={group._id}>{group.name}</option>)}</select></label>
+        </div>}
+        {!!importRows.length && <div className="wa-import-preview">
+          <div><span><strong>Review and edit</strong><small>{validImportRows.length} valid · {invalidImportCount} needs correction</small></span><em>Changes here are saved to CRM</em></div>
+          <div className="wa-import-table"><table><thead><tr><th>#</th><th>Student name</th><th>WhatsApp phone</th><th/></tr></thead><tbody>{importRows.map((row, index) => { const valid = row.name.trim().length >= 2 && row.phone.replace(/\D/g, "").length >= 10 && row.phone.replace(/\D/g, "").length <= 15; return <tr key={index} className={valid ? "" : "invalid"}><td>{index + 1}</td><td><input value={row.name} onChange={(event) => updateImportRow(index, "name", event.target.value)} aria-label={`Student name row ${index + 1}`}/></td><td><input value={row.phone} onChange={(event) => updateImportRow(index, "phone", event.target.value)} aria-label={`Phone row ${index + 1}`}/></td><td><button type="button" onClick={() => setImportRows((current) => current.filter((_, rowIndex) => rowIndex !== index))} aria-label={`Remove row ${index + 1}`}><Trash2 size={14}/></button></td></tr>; })}</tbody></table></div>
+        </div>}
+        <label className="wa-consent"><input type="checkbox" checked={consentConfirmed} onChange={(event) => setConsentConfirmed(event.target.checked)}/><span><strong>Import as opted-in</strong> — I confirm every student in this file agreed to receive AIMS Global messages on WhatsApp.</span></label>
+        <footer><span>{validImportRows.length} contact{validImportRows.length === 1 ? "" : "s"} ready{invalidImportCount ? ` · ${invalidImportCount} invalid row(s) will be skipped` : ""}</span><button type="button" className="primary" disabled={busy || !consentConfirmed || !validImportRows.length} onClick={() => void importContacts()}>{busy ? "Importing…" : `Save ${validImportRows.length} and select for campaign`}</button></footer>
+      </div>}
       {templateError && <div className="wa-template-error" role="alert"><AlertCircle size={16}/><span>Approved templates could not load: {templateError}</span><button type="button" onClick={() => void refreshMetadata()}>Retry</button></div>}
       <div className="wa-campaign-grid">
         <div className="wa-audience">

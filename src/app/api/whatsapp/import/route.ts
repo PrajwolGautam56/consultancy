@@ -4,11 +4,13 @@ import { connectMongo } from "@/lib/mongodb";
 import { isPrivileged, requireSameOrigin, requireSession } from "@/lib/api-security";
 import { normalizeWhatsAppPhone } from "@/lib/whatsapp";
 import { Lead } from "@/models/Lead";
+import { WhatsAppGroup } from "@/models/WhatsAppGroup";
 
 const schema = z.object({
   contacts: z.array(z.object({ name: z.string().trim().min(2).max(120), phone: z.string().trim().min(7).max(24) }).strict()).min(1).max(1000),
   consentConfirmed: z.literal(true),
   consentSource: z.string().trim().min(3).max(120),
+  groupId: z.string().regex(/^[a-f\d]{24}$/i).optional(),
 }).strict();
 
 export async function POST(request: NextRequest) {
@@ -25,7 +27,10 @@ export async function POST(request: NextRequest) {
   }
   if (!unique.size) return NextResponse.json({ error: "No valid phone numbers were found" }, { status: 400 });
 
-  await connectMongo(); const now = new Date(); const imported: string[] = []; let created = 0; let matched = 0;
+  await connectMongo();
+  const group = parsed.data.groupId ? await WhatsAppGroup.findById(parsed.data.groupId).select("_id name") : null;
+  if (parsed.data.groupId && !group) return NextResponse.json({ error: "The selected contact group no longer exists" }, { status: 404 });
+  const now = new Date(); const imported: string[] = []; let created = 0; let matched = 0;
   const contacts = [...unique.values()];
   for (let index = 0; index < contacts.length; index += 20) {
     const batch = contacts.slice(index, index + 20);
@@ -47,5 +52,10 @@ export async function POST(request: NextRequest) {
     }));
     for (const result of results) if (result) { imported.push(result.id); if (result.created) created += 1; else matched += 1; }
   }
-  return NextResponse.json({ leadIds: imported, total: imported.length, created, matched, skipped: unique.size - imported.length });
+  const leadIds = [...new Set(imported)];
+  if (group && leadIds.length) await WhatsAppGroup.updateOne({ _id: group._id }, {
+    $addToSet: { memberIds: { $each: leadIds } },
+    $set: { updatedBy: session.userId },
+  });
+  return NextResponse.json({ leadIds, total: leadIds.length, created, matched, skipped: unique.size - leadIds.length, group: group ? { id: String(group._id), name: group.name } : null });
 }
