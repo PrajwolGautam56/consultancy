@@ -2,7 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
-import { AlertCircle, ArrowLeft, Check, CheckCheck, ChevronDown, Clock3, FileText, ImagePlus, Loader2, MessageCircle, RefreshCw, Search, Send, ShieldCheck, Upload, X } from "lucide-react";
+import { AlertCircle, ArrowLeft, Check, CheckCheck, ChevronDown, Clock3, FileText, ImagePlus, Inbox, Loader2, Megaphone, MessageCircle, Plus, RefreshCw, Search, Send, ShieldCheck, Trash2, Upload, Users, X } from "lucide-react";
 
 type Contact = { _id: string; name: string; phone: string; whatsappOptIn?: boolean; unlinked?: boolean };
 type Message = { _id: string; leadId?: string | null; waId?: string; direction: "inbound" | "outbound"; type?: string; body: string; mediaId?: string; mimeType?: string; status: string; error?: string; occurredAt: string };
@@ -13,6 +13,7 @@ type SetupApp = { id: string; name: string; overrideCallbackUri?: string };
 type AccountDiagnostics = { accountId: string; subscribedApps: SetupApp[]; errors: { phones?: string; subscriptions?: string; templates?: string } };
 type WhatsAppSetup = { accountId: string; phoneId: string; templateAccountId?: string; phoneMatches: boolean; phones: Array<{ id: string; displayPhoneNumber: string }>; subscribedApps: SetupApp[]; templateAccountDiagnostics?: AccountDiagnostics; templateCount: number; errors: { phones?: string; subscriptions?: string; templates?: string } };
 type SetupConnectionResult = { success: boolean; error?: string; accounts?: Array<{ accountId: string; roles: string[]; phoneVerified: boolean; subscriptionAccepted: boolean; error?: string; warning?: string }> };
+type ContactGroup = { _id: string; name: string; description: string; color: "green" | "blue" | "violet" | "orange" | "rose"; memberIds: string[]; memberCount: number; updatedAt?: string };
 
 function messageConversationId(message: Message) {
   return message.leadId ? String(message.leadId) : message.waId ? `wa:${message.waId}` : "";
@@ -60,11 +61,13 @@ async function readApi<T>(response: Response): Promise<T> {
 }
 
 export default function WhatsAppView({ privileged, superAdmin = false }: { privileged: boolean; superAdmin?: boolean }) {
+  const [workspaceTab, setWorkspaceTab] = useState<"inbox" | "broadcasts" | "groups">("inbox");
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [recentMessages, setRecentMessages] = useState<Message[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [thread, setThread] = useState<Message[]>([]);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [groups, setGroups] = useState<ContactGroup[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState("");
   const [selectedOneTemplate, setSelectedOneTemplate] = useState("");
@@ -77,6 +80,14 @@ export default function WhatsAppView({ privileged, superAdmin = false }: { privi
   const [checked, setChecked] = useState<string[]>([]);
   const [search, setSearch] = useState("");
   const [audienceSearch, setAudienceSearch] = useState("");
+  const [audienceGroup, setAudienceGroup] = useState("all");
+  const [selectedGroupId, setSelectedGroupId] = useState("");
+  const [groupMembers, setGroupMembers] = useState<string[]>([]);
+  const [groupName, setGroupName] = useState("");
+  const [groupDescription, setGroupDescription] = useState("");
+  const [groupColor, setGroupColor] = useState<ContactGroup["color"]>("green");
+  const [showGroupCreate, setShowGroupCreate] = useState(false);
+  const [groupSearch, setGroupSearch] = useState("");
   const [reply, setReply] = useState("");
   const [attachment, setAttachment] = useState<File | null>(null);
   const [notice, setNotice] = useState("");
@@ -130,6 +141,7 @@ export default function WhatsAppView({ privileged, superAdmin = false }: { privi
     const results = await Promise.allSettled([
       fetch("/api/whatsapp/templates", { cache: "no-store" }).then((response) => readApi<{ templates: Template[] }>(response)),
       privileged ? fetch("/api/whatsapp/campaigns", { cache: "no-store" }).then((response) => readApi<{ campaigns: Campaign[] }>(response)) : Promise.resolve({ campaigns: [] }),
+      privileged ? fetch("/api/whatsapp/groups", { cache: "no-store" }).then((response) => readApi<{ groups: ContactGroup[] }>(response)) : Promise.resolve({ groups: [] }),
     ]);
     if (results[0].status === "fulfilled") {
       const available = results[0].value.templates || [];
@@ -139,6 +151,15 @@ export default function WhatsAppView({ privileged, superAdmin = false }: { privi
       setSelectedOneTemplate((current) => current || available[0]?.name || "");
     } else setTemplateError(results[0].reason instanceof Error ? results[0].reason.message : "Approved templates could not be loaded.");
     if (results[1].status === "fulfilled") setCampaigns(results[1].value.campaigns || []);
+    if (results[2].status === "fulfilled") {
+      const availableGroups = results[2].value.groups || [];
+      setGroups(availableGroups);
+      const firstGroup = availableGroups[0];
+      if (firstGroup) {
+        setSelectedGroupId(firstGroup._id); setGroupMembers(firstGroup.memberIds);
+        setGroupName(firstGroup.name); setGroupDescription(firstGroup.description || ""); setGroupColor(firstGroup.color);
+      }
+    }
   }, [privileged]);
 
   const refreshSetup = useCallback(async () => {
@@ -225,7 +246,11 @@ export default function WhatsAppView({ privileged, superAdmin = false }: { privi
   const chatContacts = useMemo(() => contacts.filter((contact) => lastMessageById.has(String(contact._id)))
     .sort((a, b) => new Date(lastMessageById.get(String(b._id))?.occurredAt || 0).getTime() - new Date(lastMessageById.get(String(a._id))?.occurredAt || 0).getTime()), [contacts, lastMessageById]);
   const displayedContacts = (inboxTab === "chats" ? chatContacts : contacts).filter((contact) => `${contact.name} ${contact.phone}`.toLowerCase().includes(search.trim().toLowerCase()));
-  const filteredAudience = contacts.filter((contact) => !contact.unlinked && `${contact.name} ${contact.phone}`.toLowerCase().includes(audienceSearch.trim().toLowerCase()));
+  const activeAudienceGroup = groups.find((group) => group._id === audienceGroup);
+  const filteredAudience = contacts.filter((contact) => !contact.unlinked &&
+    (!activeAudienceGroup || activeAudienceGroup.memberIds.includes(String(contact._id))) &&
+    `${contact.name} ${contact.phone}`.toLowerCase().includes(audienceSearch.trim().toLowerCase()));
+  const groupCandidates = contacts.filter((contact) => !contact.unlinked && `${contact.name} ${contact.phone}`.toLowerCase().includes(groupSearch.trim().toLowerCase()));
   const selected = contactById.get(selectedContact);
   const latestInbound = [...thread].reverse().find((message) => message.direction === "inbound");
   const lastInboundTime = lastInboundAt !== undefined ? lastInboundAt : latestInbound?.occurredAt;
@@ -271,6 +296,65 @@ export default function WhatsAppView({ privileged, superAdmin = false }: { privi
   }
 
   function toggle(id: string) { setChecked((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]); }
+
+  function selectAudience(ids: string[]) {
+    setChecked([...new Set(ids.filter((id) => contacts.some((contact) => String(contact._id) === id && contact.whatsappOptIn)))]);
+  }
+
+  function toggleGroupMember(id: string) {
+    setGroupMembers((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
+  }
+
+  function openGroup(group: ContactGroup) {
+    setSelectedGroupId(group._id); setGroupMembers(group.memberIds);
+    setGroupName(group.name); setGroupDescription(group.description || ""); setGroupColor(group.color);
+  }
+
+  async function createGroup(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    setBusy(true); setNotice("");
+    try {
+      const data = await readApi<{ group: ContactGroup }>(await fetch("/api/whatsapp/groups", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: form.get("name"), description: form.get("description"), color: form.get("color") }),
+      }));
+      setGroups((current) => [...current, data.group].sort((a, b) => a.name.localeCompare(b.name)));
+      openGroup(data.group); setShowGroupCreate(false);
+      setNotice(`Group “${data.group.name}” created. Select contacts and save the group.`);
+    } catch (error) { setNotice(error instanceof Error ? error.message : "Group could not be created."); }
+    finally { setBusy(false); }
+  }
+
+  async function saveGroup() {
+    if (!selectedGroupId) return;
+    setBusy(true); setNotice("");
+    try {
+      const data = await readApi<{ group: ContactGroup }>(await fetch("/api/whatsapp/groups", {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: selectedGroupId, name: groupName, description: groupDescription, color: groupColor, memberIds: groupMembers }),
+      }));
+      setGroups((current) => current.map((group) => group._id === data.group._id ? data.group : group).sort((a, b) => a.name.localeCompare(b.name)));
+      setNotice(`“${data.group.name}” saved with ${data.group.memberCount} contact${data.group.memberCount === 1 ? "" : "s"}.`);
+    } catch (error) { setNotice(error instanceof Error ? error.message : "Group could not be saved."); }
+    finally { setBusy(false); }
+  }
+
+  async function deleteGroup() {
+    const group = groups.find((item) => item._id === selectedGroupId);
+    if (!group || !window.confirm(`Delete the group “${group.name}”? Contacts will stay in the CRM.`)) return;
+    setBusy(true); setNotice("");
+    try {
+      await readApi<{ success: boolean }>(await fetch(`/api/whatsapp/groups?id=${encodeURIComponent(group._id)}`, { method: "DELETE" }));
+      const remaining = groups.filter((item) => item._id !== group._id);
+      setGroups(remaining);
+      if (remaining[0]) openGroup(remaining[0]);
+      else { setSelectedGroupId(""); setGroupMembers([]); setGroupName(""); setGroupDescription(""); }
+      if (audienceGroup === group._id) setAudienceGroup("all");
+      setNotice(`“${group.name}” deleted. No contacts were removed from the CRM.`);
+    } catch (error) { setNotice(error instanceof Error ? error.message : "Group could not be deleted."); }
+    finally { setBusy(false); }
+  }
 
   async function recordConsent(optedIn: boolean) {
     if (!checked.length) return setNotice("Select at least one student first.");
@@ -368,7 +452,12 @@ export default function WhatsAppView({ privileged, superAdmin = false }: { privi
   return <div className="wa-page">
     {!configured && !loadingInbox && !inboxError && <div className="wa-warning"><ShieldCheck size={20}/><span><strong>WhatsApp API setup required</strong><small>Add Meta credentials in Vercel to send messages. Existing conversation history remains available here.</small></span></div>}
     {notice && <div className="wa-notice" role="status"><span>{notice}</span><button type="button" onClick={() => setNotice("")} aria-label="Dismiss notice"><X size={16}/></button></div>}
-    <section className={`panel wa-inbox ${mobileThreadOpen ? "wa-show-thread" : ""}`} aria-label="WhatsApp inbox">
+    <nav className="wa-workspace-nav" aria-label="WhatsApp workspace">
+      <button type="button" className={workspaceTab === "inbox" ? "active" : ""} onClick={() => setWorkspaceTab("inbox")}><Inbox size={18}/><span><strong>Inbox</strong><small>Chats and contacts</small></span><em>{chatContacts.length}</em></button>
+      {privileged && <button type="button" className={workspaceTab === "broadcasts" ? "active" : ""} onClick={() => setWorkspaceTab("broadcasts")}><Megaphone size={18}/><span><strong>Broadcasts</strong><small>Bulk template messages</small></span></button>}
+      {privileged && <button type="button" className={workspaceTab === "groups" ? "active" : ""} onClick={() => setWorkspaceTab("groups")}><Users size={18}/><span><strong>Contact groups</strong><small>Build reusable audiences</small></span><em>{groups.length}</em></button>}
+    </nav>
+    {workspaceTab === "inbox" && <section className={`panel wa-inbox ${mobileThreadOpen ? "wa-show-thread" : ""}`} aria-label="WhatsApp inbox">
       <div className="wa-contacts">
         <div className="wa-section-head"><span><strong>WhatsApp inbox</strong><small>{chatContacts.length} conversations · {contacts.filter((contact) => !contact.unlinked).length} contacts</small></span><button type="button" onClick={() => void refreshInbox()} disabled={refreshing} aria-label="Refresh inbox" title="Refresh inbox"><RefreshCw size={17} className={refreshing ? "wa-spinning" : ""}/></button></div>
         <div className="wa-tabs" role="tablist" aria-label="Inbox view"><button type="button" role="tab" aria-selected={inboxTab === "chats"} className={inboxTab === "chats" ? "active" : ""} onClick={() => setInboxTab("chats")}>Chats <span>{chatContacts.length}</span></button><button type="button" role="tab" aria-selected={inboxTab === "contacts"} className={inboxTab === "contacts" ? "active" : ""} onClick={() => setInboxTab("contacts")}>All contacts</button></div>
@@ -408,9 +497,9 @@ export default function WhatsAppView({ privileged, superAdmin = false }: { privi
           </div>}
         </> : <div className="wa-thread-state wa-thread-placeholder"><MessageCircle size={38}/><strong>Select a conversation</strong><span>Choose a chat or search your CRM contacts to open their WhatsApp history.</span></div>}
       </div>
-    </section>
+    </section>}
 
-    {superAdmin && <details className="panel wa-setup"><summary><ShieldCheck size={18}/> WhatsApp connection health</summary><div className="wa-setup-content">
+    {superAdmin && workspaceTab === "inbox" && <details className="panel wa-setup"><summary><ShieldCheck size={18}/> WhatsApp connection health</summary><div className="wa-setup-content">
       {setupError && <p className="wa-template-error" role="alert"><AlertCircle size={16}/>{setupError}</p>}
       {!setup && !setupError && <p>Checking Meta connection…</p>}
       {setup && <>
@@ -425,12 +514,35 @@ export default function WhatsAppView({ privileged, superAdmin = false }: { privi
       <div className="wa-setup-actions"><button type="button" className="secondary" onClick={() => void refreshSetup()} disabled={setupBusy}>Refresh status</button><button type="button" className="primary" onClick={() => void connectWebhook()} disabled={setupBusy || !setup?.phoneMatches}>{setupBusy ? "Connecting…" : "Connect incoming messages"}</button></div>
     </div></details>}
 
-    {privileged && <section className="panel wa-campaign">
-      <div className="task-toolbar"><span><h2>Bulk WhatsApp campaign</h2><p>Import a name and phone list or select existing opted-in CRM contacts.</p></span><button className="primary" type="button" onClick={() => setShowImport(true)}><Upload size={15}/> Import contacts</button></div>
+    {privileged && workspaceTab === "groups" && <section className="panel wa-groups">
+      <div className="task-toolbar"><span><h2>WhatsApp contact groups</h2><p>Create reusable audiences such as India, Nursing, CEE, SRM or February Intake.</p></span><button className="primary" type="button" onClick={() => setShowGroupCreate((current) => !current)}><Plus size={16}/> New group</button></div>
+      {showGroupCreate && <form className="wa-group-create" onSubmit={createGroup}><label>Group name<input required name="name" maxLength={60} placeholder="e.g. India Nursing 2027"/></label><label>Description<input name="description" maxLength={180} placeholder="Optional note about this audience"/></label><label>Colour<select name="color" defaultValue="green"><option value="green">Green</option><option value="blue">Blue</option><option value="violet">Violet</option><option value="orange">Orange</option><option value="rose">Rose</option></select></label><button className="primary" disabled={busy}>{busy ? "Creating…" : "Create group"}</button></form>}
+      <div className="wa-groups-grid">
+        <aside className="wa-group-list">
+          {groups.map((group) => <button type="button" key={group._id} className={selectedGroupId === group._id ? "active" : ""} onClick={() => openGroup(group)}><i className={`wa-group-dot ${group.color}`}/><span><strong>{group.name}</strong><small>{group.description || "Saved WhatsApp audience"}</small></span><em>{group.memberCount}</em></button>)}
+          {!groups.length && <div className="wa-group-empty"><Users size={28}/><strong>No groups yet</strong><span>Create your first audience group.</span></div>}
+        </aside>
+        {selectedGroupId ? <div className="wa-group-editor">
+          <header><span><strong>Edit group</strong><small>{groupMembers.length} contact{groupMembers.length === 1 ? "" : "s"} selected</small></span><button type="button" className="wa-danger-icon" onClick={() => void deleteGroup()} disabled={busy} aria-label="Delete group" title="Delete group"><Trash2 size={17}/></button></header>
+          <div className="wa-group-fields"><label>Name<input value={groupName} maxLength={60} onChange={(event) => setGroupName(event.target.value)}/></label><label>Description<input value={groupDescription} maxLength={180} onChange={(event) => setGroupDescription(event.target.value)}/></label><label>Colour<select value={groupColor} onChange={(event) => setGroupColor(event.target.value as ContactGroup["color"])}><option value="green">Green</option><option value="blue">Blue</option><option value="violet">Violet</option><option value="orange">Orange</option><option value="rose">Rose</option></select></label></div>
+          <div className="wa-group-member-tools"><label className="wa-search"><Search size={16}/><input value={groupSearch} onChange={(event) => setGroupSearch(event.target.value)} placeholder="Search CRM contacts" aria-label="Search group contacts"/></label><button type="button" onClick={() => setGroupMembers([...new Set([...groupMembers, ...groupCandidates.map((contact) => String(contact._id))])])}>Select shown</button><button type="button" onClick={() => setGroupMembers([])}>Clear</button></div>
+          <div className="wa-group-members">{groupCandidates.map((contact) => <label key={contact._id}><input type="checkbox" checked={groupMembers.includes(String(contact._id))} onChange={() => toggleGroupMember(String(contact._id))}/><span className="wa-avatar">{contact.name?.trim().slice(0, 1).toUpperCase() || "?"}</span><span><strong>{contact.name}</strong><small>{contact.phone}</small></span>{contact.whatsappOptIn && <em>Opted in</em>}</label>)}</div>
+          <footer><small>Groups organise contacts only. Sending still requires recorded WhatsApp consent.</small><button type="button" className="primary" disabled={busy || groupName.trim().length < 2} onClick={() => void saveGroup()}>{busy ? "Saving…" : "Save group"}</button></footer>
+        </div> : <div className="wa-group-editor-empty"><Users size={36}/><strong>Select or create a group</strong><span>Then choose which CRM contacts belong to it.</span></div>}
+      </div>
+    </section>}
+
+    {privileged && workspaceTab === "broadcasts" && <section className="panel wa-campaign">
+      <div className="task-toolbar wa-broadcast-head"><span><h2>Send one message to many contacts</h2><p>Select all opted-in contacts or choose a saved group, then send one approved Meta template to everyone.</p></span><button className="primary" type="button" onClick={() => setShowImport(true)}><Upload size={15}/> Import contacts</button></div>
       {showImport && <div className="wa-import"><header><span><strong>Bulk import campaign contacts</strong><small>CSV columns or pasted lines: Name, Phone</small></span><button type="button" onClick={() => setShowImport(false)} aria-label="Close import"><X size={16}/></button></header><div><label>Paste name and phone<textarea value={importText} onChange={(event) => setImportText(event.target.value)} placeholder={"Name, Phone\nAayush Shrestha, 9841280991\nSita Rai, 9800000000"}/></label><label className="wa-file"><Upload size={18}/><span>Upload CSV file<small>The first two columns must be Name and Phone.</small></span><input type="file" accept=".csv,text/csv,.txt" onChange={(event) => { const file = event.target.files?.[0]; if (file) void file.text().then(setImportText); }}/></label></div><label className="wa-consent"><input type="checkbox" checked={consentConfirmed} onChange={(event) => setConsentConfirmed(event.target.checked)}/><span>I confirm these students agreed to receive WhatsApp messages from AIMS Global. The CRM will store this consent source.</span></label><footer><span>{parseImport().length} valid row(s) detected</span><button type="button" className="primary" disabled={busy || !consentConfirmed || !parseImport().length} onClick={() => void importContacts()}>{busy ? "Importing…" : "Import and select students"}</button></footer></div>}
       {templateError && <div className="wa-template-error" role="alert"><AlertCircle size={16}/><span>Approved templates could not load: {templateError}</span><button type="button" onClick={() => void refreshMetadata()}>Retry</button></div>}
       <div className="wa-campaign-grid">
-        <div className="wa-audience"><label className="wa-search"><Search size={16}/><input value={audienceSearch} onChange={(event) => setAudienceSearch(event.target.value)} placeholder="Filter students" aria-label="Filter campaign students"/></label><div>{filteredAudience.map((contact) => <label key={contact._id}><input type="checkbox" checked={checked.includes(String(contact._id))} onChange={() => toggle(String(contact._id))}/><span><strong>{contact.name}</strong><small>{contact.phone}</small></span><em className={contact.whatsappOptIn ? "yes" : "no"}>{contact.whatsappOptIn ? "Opted in" : "No consent"}</em></label>)}{!filteredAudience.length && <div className="empty compact">No students found.</div>}</div><footer><button type="button" className="secondary" disabled={busy} onClick={() => void recordConsent(true)}>Record opt-in</button><button type="button" className="secondary" disabled={busy} onClick={() => void recordConsent(false)}>Opt out</button></footer></div>
+        <div className="wa-audience">
+          <div className="wa-audience-tools"><label>Audience<select value={audienceGroup} onChange={(event) => { setAudienceGroup(event.target.value); setChecked([]); }}><option value="all">All CRM contacts</option>{groups.map((group) => <option key={group._id} value={group._id}>{group.name} · {group.memberCount}</option>)}</select></label><button type="button" onClick={() => selectAudience(filteredAudience.map((contact) => String(contact._id)))}><CheckCheck size={15}/> Select opted-in</button><button type="button" onClick={() => setChecked([])}>Clear</button></div>
+          <label className="wa-search"><Search size={16}/><input value={audienceSearch} onChange={(event) => setAudienceSearch(event.target.value)} placeholder="Search this audience" aria-label="Filter campaign students"/></label>
+          <div>{filteredAudience.map((contact) => <label key={contact._id}><input type="checkbox" checked={checked.includes(String(contact._id))} onChange={() => toggle(String(contact._id))}/><span><strong>{contact.name}</strong><small>{contact.phone}</small></span><em className={contact.whatsappOptIn ? "yes" : "no"}>{contact.whatsappOptIn ? "Opted in" : "No consent"}</em></label>)}{!filteredAudience.length && <div className="empty compact">No contacts found in this audience.</div>}</div>
+          <footer><span>{checked.length} selected · {optedInSelected.length} sendable</span><button type="button" className="secondary" disabled={busy} onClick={() => void recordConsent(true)}>Record opt-in</button><button type="button" className="secondary" disabled={busy} onClick={() => void recordConsent(false)}>Opt out</button></footer>
+        </div>
         <form className="wa-campaign-form" onSubmit={createCampaign}><label>Campaign name<input required name="name" placeholder="WhatsApp test campaign"/></label><label>Approved Meta template<select required value={selectedTemplate} onChange={(event) => setSelectedTemplate(event.target.value)}><option value="">Select approved template</option>{templates.map((template) => <option key={`${template.name}-${template.language}`} value={template.name}>{template.name} · {template.category} · {template.language}</option>)}</select></label>{campaignTemplate?.body && <p className="wa-template-preview">{campaignTemplate.body}</p>}{Array.from({ length: Math.max(0, (campaignTemplate?.parameterCount || 0) - 1) }, (_, index) => <label key={index}>Template value {index + 2}<input required name={`parameter${index + 2}`} placeholder={`Value for {{${index + 2}}}`}/></label>)}{(campaignTemplate?.parameterCount || 0) > 0 && <small>Variable {"{{1}}"} uses each selected student&apos;s CRM name automatically.</small>}<div className="wa-estimate"><strong>{optedInSelected.length} recipients selected</strong><span>Estimated Meta marketing fee: ≈ NPR {(optedInSelected.length * 13.87).toLocaleString("en-NP", { maximumFractionDigits: 0 })}</span><small>Estimate only; Meta bills by recipient country and delivered message.</small></div><button className="primary" disabled={busy || !configured || !optedInSelected.length || !selectedTemplate}><Send size={16}/>{busy ? "Sending…" : "Create and send campaign"}</button></form>
       </div>
       {!!campaigns.length && <div className="wa-campaign-history"><h3>Recent campaigns</h3>{campaigns.map((campaign) => <div key={campaign._id}><span><strong>{campaign.name}</strong><small>{timeLabel(campaign.createdAt, true)}{campaign.lastDeliveryError ? ` · ${campaign.lastDeliveryError}` : ""}</small></span><b>{campaign.status}</b><em>{campaign.accepted ?? campaign.sent}/{campaign.total} Meta accepted · {campaign.delivered ?? 0} delivered · {(campaign.deliveryFailed ?? 0) + campaign.failed} failed</em></div>)}</div>}
