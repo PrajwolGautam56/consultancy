@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint .",
     "test:whatsapp-setup": "node --no-warnings --experimental-strip-types --test tests/whatsapp-setup.test.mjs",
+    "test:sms": "node --no-warnings --experimental-strip-types --test tests/sms.test.mjs",
     "check": "npm run lint && tsc --noEmit && npm run build"
   },
   "dependencies": {

@@ -15,6 +15,7 @@ import {
   Menu,
   MessageSquareText,
   MessageCircle,
+  Smartphone,
   Pencil,
   Phone,
   Plus,
@@ -28,6 +29,7 @@ import {
   X,
 } from "lucide-react";
 import WhatsAppView from "@/components/WhatsAppView";
+import SmsView from "@/components/SmsView";
 
 type Stage =
   | "New inquiry"
@@ -105,6 +107,7 @@ const nav = [
   ["Dashboard", LayoutDashboard],
   ["Leads & students", Users],
   ["WhatsApp", MessageCircle],
+  ["SMS", Smartphone],
   ["Office visitors", UserCheck],
   ["Tasks", ListTodo],
   ["Follow-ups", CalendarClock],
@@ -460,7 +463,7 @@ export default function Home() {
           {nav
             .filter(
               ([label]) =>
-                label !== "Team" ||
+                !["Team", "SMS"].includes(label) ||
                 ["super_admin", "admin", "manager"].includes(
                   currentUser?.role || "",
                 ),
@@ -820,6 +823,8 @@ export default function Home() {
             />
           ) : active === "WhatsApp" ? (
             <WhatsAppView privileged={["super_admin", "admin", "manager"].includes(currentUser?.role || "")} superAdmin={currentUser?.role === "super_admin"} />
+          ) : active === "SMS" ? (
+            <SmsView privileged={["super_admin", "admin", "manager"].includes(currentUser?.role || "")} />
           ) : active === "Team" ? (
             <TeamView />
           ) : active === "Follow-ups" ? (
