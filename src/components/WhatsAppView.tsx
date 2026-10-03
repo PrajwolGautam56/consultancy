@@ -376,6 +376,21 @@ export default function WhatsAppView({ privileged, superAdmin = false }: { privi
     finally { setBusy(false); }
   }
 
+  async function recordSelectedContactConsent() {
+    if (!selected || selected.unlinked || selected.whatsappOptIn) return;
+    setBusy(true); setNotice("");
+    try {
+      const data = await readApi<{ updated: number }>(await fetch("/api/whatsapp/consent", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ leadIds: [selected._id], optedIn: true, source: "Consent confirmed by staff in CRM chat" }),
+      }));
+      setNotice(data.updated ? `${selected.name}'s WhatsApp opt-in was recorded.` : "This student's opt-in was already recorded.");
+      await refreshInbox();
+    } catch (error) { setNotice(error instanceof Error ? error.message : "Consent could not be updated."); }
+    finally { setBusy(false); }
+  }
+
   async function sendReply(event: FormEvent) {
     event.preventDefault();
     if ((!reply.trim() && !attachment) || !selectedContact || !canReply) return;
@@ -499,7 +514,7 @@ export default function WhatsAppView({ privileged, superAdmin = false }: { privi
             {threadError && !!thread.length && <div className="wa-thread-inline-error"><AlertCircle size={14}/> {threadError}</div>}
             <div ref={messagesEndRef}/>
           </div>
-          {showTemplateComposer && !selected.unlinked && <form className="wa-single-template" onSubmit={sendTemplate}><div><strong>Send an approved template</strong><small>Use this when the 24-hour reply window is closed. The student must have opted in.</small></div>{templateError && <div className="wa-template-error"><AlertCircle size={15}/><span>{templateError}</span><button type="button" onClick={() => void refreshMetadata()}>Retry</button></div>}{!templateError && !templates.length && <small className="wa-template-hint">No approved Meta templates are available yet.</small>}<label>Meta template<select required value={selectedOneTemplate} onChange={(event) => { setSelectedOneTemplate(event.target.value); setTemplateValues([]); }}><option value="">Select a template</option>{templates.map((template) => <option key={`${template.name}-${template.language}`} value={template.name}>{template.name} · {template.language}</option>)}</select></label>{oneTemplate?.body && <p className="wa-template-preview">{oneTemplate.body.replace(/\{\{1\}\}/g, selected.name)}</p>}{oneTemplate && oneTemplate.parameterCount > 0 && <small className="wa-template-hint">{"{{1}}"} uses {selected.name} automatically.</small>}{Array.from({ length: Math.max(0, (oneTemplate?.parameterCount || 0) - 1) }, (_, index) => <label key={index}>Value for {`{{${index + 2}}}`}<input required value={templateValues[index + 1] || ""} onChange={(event) => setTemplateValues((current) => { const next = [...current]; next[index + 1] = event.target.value; return next; })}/></label>)}<button type="submit" className="primary" disabled={busy || !configured || !selected.whatsappOptIn || !oneTemplate}>{busy ? "Sending…" : "Send template"}</button>{!selected.whatsappOptIn && <small className="wa-consent-reminder">Record this student&apos;s WhatsApp opt-in before sending a template.</small>}</form>}
+          {showTemplateComposer && !selected.unlinked && <form className="wa-single-template" onSubmit={sendTemplate}><div><strong>Send an approved template</strong><small>Use this when the 24-hour reply window is closed. The student must have opted in.</small></div>{templateError && <div className="wa-template-error"><AlertCircle size={15}/><span>{templateError}</span><button type="button" onClick={() => void refreshMetadata()}>Retry</button></div>}{!templateError && !templates.length && <small className="wa-template-hint">No approved Meta templates are available yet.</small>}<label>Meta template<select required value={selectedOneTemplate} onChange={(event) => { setSelectedOneTemplate(event.target.value); setTemplateValues([]); }}><option value="">Select a template</option>{templates.map((template) => <option key={`${template.name}-${template.language}`} value={template.name}>{template.name} · {template.language}</option>)}</select></label>{oneTemplate?.body && <p className="wa-template-preview">{oneTemplate.body.replace(/\{\{1\}\}/g, selected.name)}</p>}{oneTemplate && oneTemplate.parameterCount > 0 && <small className="wa-template-hint">{"{{1}}"} uses {selected.name} automatically.</small>}{Array.from({ length: Math.max(0, (oneTemplate?.parameterCount || 0) - 1) }, (_, index) => <label key={index}>Value for {`{{${index + 2}}}`}<input required value={templateValues[index + 1] || ""} onChange={(event) => setTemplateValues((current) => { const next = [...current]; next[index + 1] = event.target.value; return next; })}/></label>)}{!selected.whatsappOptIn && <div className="wa-consent-action"><span><strong>Consent required</strong><small>Only confirm this if the student agreed to receive AIMS Global messages on WhatsApp.</small></span><button type="button" disabled={busy} onClick={() => void recordSelectedContactConsent()}>{busy ? "Saving…" : "Record opt-in"}</button></div>}<button type="submit" className="primary" disabled={busy || !configured || !selected.whatsappOptIn || !oneTemplate}>{busy ? "Sending…" : "Send template"}</button></form>}
           {!showTemplateComposer && <div className={`wa-reply-area ${canReply ? "" : "closed"}`}>
             {!canReply && <div className="wa-window-notice"><Clock3 size={16}/><span>{lastInboundTime ? "The 24-hour reply window has closed." : "A student must message first to open the 24-hour reply window."} {!selected.unlinked ? "Send an approved template to start a conversation." : ""}</span>{!selected.unlinked && <button type="button" onClick={() => setShowTemplateComposer(true)}>Choose template</button>}</div>}
             {attachment && <div className="wa-attachment-preview"><ImagePlus size={17}/><span>{attachment.name}</span><button type="button" onClick={() => { setAttachment(null); if (attachmentInputRef.current) attachmentInputRef.current.value = ""; }} aria-label="Remove attached image"><X size={16}/></button></div>}
