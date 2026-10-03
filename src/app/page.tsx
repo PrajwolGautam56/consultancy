@@ -218,13 +218,15 @@ export default function Home() {
     const checkSession = () =>
       fetch("/api/auth/me")
         .then(async (response) => {
-          if (!response.ok) throw new Error();
+          if (response.status === 401 || response.status === 403) {
+            if (active) window.location.replace("/login?reason=session-ended");
+            return;
+          }
+          if (!response.ok) throw new Error("Session check temporarily unavailable");
           const data = await response.json();
           if (active) setCurrentUser(data.user);
         })
-        .catch(() => {
-          if (active) window.location.replace("/login?reason=session-ended");
-        });
+        .catch(() => { /* A brief network or server error should not sign staff out. */ });
     checkSession();
     const interval = window.setInterval(checkSession, 30_000);
     const onVisibility = () => {

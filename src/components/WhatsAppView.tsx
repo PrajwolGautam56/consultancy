@@ -12,6 +12,7 @@ type Template = { name: string; language: string; category: string; parameterCou
 type SetupApp = { id: string; name: string; overrideCallbackUri?: string };
 type AccountDiagnostics = { accountId: string; subscribedApps: SetupApp[]; errors: { phones?: string; subscriptions?: string; templates?: string } };
 type WhatsAppSetup = { accountId: string; phoneId: string; templateAccountId?: string; phoneMatches: boolean; phones: Array<{ id: string; displayPhoneNumber: string }>; subscribedApps: SetupApp[]; templateAccountDiagnostics?: AccountDiagnostics; templateCount: number; errors: { phones?: string; subscriptions?: string; templates?: string } };
+type SetupConnectionResult = { success: boolean; error?: string; accounts?: Array<{ accountId: string; roles: string[]; phoneVerified: boolean; subscriptionAccepted: boolean; error?: string; warning?: string }> };
 
 function messageConversationId(message: Message) {
   return message.leadId ? String(message.leadId) : message.waId ? `wa:${message.waId}` : "";
@@ -149,11 +150,19 @@ export default function WhatsAppView({ privileged, superAdmin = false }: { privi
   }, [superAdmin]);
 
   async function connectWebhook() {
-    setSetupBusy(true); setSetupError("");
+    setSetupBusy(true); setSetupError(""); setNotice("");
     try {
-      await readApi<{ success: boolean }>(await fetch("/api/whatsapp/setup", { method: "POST" }));
+      const response = await fetch("/api/whatsapp/setup", { method: "POST" });
+      let result: SetupConnectionResult;
+      try { result = await response.json() as SetupConnectionResult; }
+      catch { throw new Error(`Service returned an unreadable response (${response.status}). Please retry.`); }
       await refreshSetup();
-      setNotice("The CRM app is subscribed to incoming WhatsApp webhooks. Send a new test message to verify delivery.");
+      const details = (result.accounts || []).map((account) => `${account.roles.join(" + ")} account ${account.accountId}: ${account.subscriptionAccepted ? "accepted" : account.error || "not connected"}`).join("; ");
+      if (!response.ok || !result.success) {
+        setSetupError([result.error || `Connection failed (${response.status}).`, details].filter(Boolean).join(" "));
+        return;
+      }
+      setNotice(`Meta accepted incoming-message subscriptions for ${details}. Send a new test message to verify delivery.`);
     } catch (error) { setSetupError(error instanceof Error ? error.message : "WhatsApp webhook could not be connected."); }
     finally { setSetupBusy(false); }
   }

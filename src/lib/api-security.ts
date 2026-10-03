@@ -8,14 +8,20 @@ const buckets = new Map<string, { count: number; reset: number }>();
 export async function requireSession(request: NextRequest): Promise<SessionPayload | NextResponse> {
   const token = request.cookies.get(SESSION_COOKIE)?.value;
   if (!token) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+  let session: SessionPayload;
   try {
-    const session=await verifySessionToken(token);
-    if(!session.sessionId)return NextResponse.json({error:"Session expired"},{status:401});
+    session = await verifySessionToken(token);
+  } catch {
+    return NextResponse.json({ error: "Session expired" }, { status: 401 });
+  }
+  if (!session.sessionId) return NextResponse.json({ error: "Session expired" }, { status: 401 });
+  try {
     await connectMongo(); const active=await User.exists({_id:session.userId,active:true,currentSessionId:session.sessionId});
     if(!active)return NextResponse.json({error:"This account was signed in on another device"},{status:401});
     return session;
+  } catch {
+    return NextResponse.json({ error: "Session check temporarily unavailable" }, { status: 503 });
   }
-  catch { return NextResponse.json({ error: "Session expired" }, { status: 401 }); }
 }
 
 export function requireSameOrigin(request: NextRequest) {

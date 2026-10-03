@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { rateLimit, requireSameOrigin, requireSession } from "@/lib/api-security";
 import { whatsappTemplateAccountId } from "@/lib/whatsapp";
+import { subscribeVerifiedWhatsAppAccounts } from "@/lib/whatsapp-setup";
 
 type MetaEdge = "phone_numbers" | "message_templates" | "subscribed_apps";
 type MetaPhone = { id?: string; display_phone_number?: string };
@@ -19,6 +20,7 @@ class MetaRequestError extends Error {
 }
 
 function safeError(error: unknown) {
+  if (error instanceof Error && error.message === "Meta did not confirm the subscription") return "Meta did not confirm the subscription.";
   if (error instanceof MetaRequestError) {
     const code = error.code ? `, code ${error.code}` : "";
     if (error.status === 401 || error.status === 403) return `Meta denied access (HTTP ${error.status}${code}). Check the token's WhatsApp Business permissions.`;
@@ -33,7 +35,7 @@ function graphVersion() {
   return /^v\d+\.\d+$/.test(configured) ? configured : "v26.0";
 }
 
-async function metaRequest<T>(url: URL, method: "GET" | "POST" = "GET"): Promise<MetaPage<T> & { success?: boolean }> {
+async function metaRequest<T>(url: URL, method: "GET" | "POST" = "GET"): Promise<MetaPage<T> & { success?: boolean | "true" }> {
   const token = process.env.WHATSAPP_ACCESS_TOKEN;
   if (!token) throw new Error("WhatsApp token is not configured");
   const response = await fetch(url, {
@@ -42,7 +44,7 @@ async function metaRequest<T>(url: URL, method: "GET" | "POST" = "GET"): Promise
     cache: "no-store",
     signal: AbortSignal.timeout(10_000),
   });
-  const result = await response.json().catch(() => null) as (MetaPage<T> & { success?: boolean }) | null;
+  const result = await response.json().catch(() => null) as (MetaPage<T> & { success?: boolean | "true" }) | null;
   if (!response.ok) throw new MetaRequestError(response.status, result?.error?.code);
   if (!result) throw new Error("Invalid Meta response");
   return result;
@@ -164,32 +166,28 @@ export async function POST(request: NextRequest) {
   const limited = rateLimit(request, "whatsapp-subscribe", 5, 60_000); if (limited) return limited;
   if (request.nextUrl.searchParams.has("accountId")) return NextResponse.json({ error: "Subscription uses the configured WhatsApp account only" }, { status: 400 });
   const config = accountConfig();
-  if (!config || !numericId.test(config.phoneId) || !process.env.WHATSAPP_ACCESS_TOKEN) {
-    return NextResponse.json({ error: "Configured WhatsApp account, phone ID, or token is missing" }, { status: 503 });
+  if (!config || !numericId.test(config.phoneId) || !config.templateAccountId || !process.env.WHATSAPP_ACCESS_TOKEN) {
+    return NextResponse.json({ error: "Configured WhatsApp accounts, phone ID, or token are missing" }, { status: 503 });
   }
 
-  let phones: MetaPhone[];
-  try {
-    phones = await metaCollection<MetaPhone>(config.accountId, "phone_numbers", "id,display_phone_number");
-  } catch (error) {
-    return NextResponse.json({ error: safeError(error) }, { status: 424 });
+  const outcome = await subscribeVerifiedWhatsAppAccounts(config.accountId, config.templateAccountId, config.phoneId, {
+    listPhoneIds: async (accountId) => (await metaCollection<MetaPhone>(accountId, "phone_numbers", "id,display_phone_number")).map((phone) => phone.id || ""),
+    subscribe: async (accountId) => {
+      const result = await metaRequest<never>(subscriptionUrl(accountId), "POST");
+      return result.success === true || result.success === "true";
+    },
+    listApps: async (accountId) => appSummaries(await metaCollection<MetaApp>(accountId, "subscribed_apps", "")),
+    safeError,
+  });
+  if (outcome.preflightFailed) {
+    return NextResponse.json({
+      success: false, accounts: outcome.accounts,
+      error: "The configured phone must be verified in every account. No subscription was changed.",
+    }, { status: outcome.accounts.some((account) => account.error !== "Configured phone ID is not present in this WhatsApp account.") ? 424 : 409 });
   }
-  if (!phones.some((phone) => phone.id === config.phoneId)) {
-    return NextResponse.json({ error: "The configured phone ID does not belong to the configured WhatsApp account" }, { status: 409 });
-  }
-
-  try {
-    const result = await metaRequest<never>(subscriptionUrl(config.accountId), "POST");
-    if (result.success !== true) throw new Error("Meta did not confirm the subscription");
-  } catch (error) {
-    return NextResponse.json({ error: safeError(error) }, { status: 424 });
-  }
-
-  try {
-    const apps = await metaCollection<MetaApp>(config.accountId, "subscribed_apps", "");
-    const subscribedApps = appSummaries(apps);
-    return NextResponse.json({ success: true, subscribedApps });
-  } catch (error) {
-    return NextResponse.json({ success: true, subscribedApps: [], warning: safeError(error) });
-  }
+  const phoneAccountApps = outcome.accounts.find((account) => account.accountId === config.accountId)?.subscribedApps || [];
+  return NextResponse.json({
+    success: outcome.success, accounts: outcome.accounts, subscribedApps: phoneAccountApps,
+    ...(!outcome.success ? { error: "One or more WhatsApp account subscriptions failed. Check each account below." } : {}),
+  }, { status: outcome.success ? 200 : 424 });
 }
