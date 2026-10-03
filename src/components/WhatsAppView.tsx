@@ -87,6 +87,7 @@ export default function WhatsAppView({ privileged, superAdmin = false }: { privi
   const [groupDescription, setGroupDescription] = useState("");
   const [groupColor, setGroupColor] = useState<ContactGroup["color"]>("green");
   const [showGroupCreate, setShowGroupCreate] = useState(false);
+  const [confirmDeleteGroup, setConfirmDeleteGroup] = useState(false);
   const [groupSearch, setGroupSearch] = useState("");
   const [reply, setReply] = useState("");
   const [attachment, setAttachment] = useState<File | null>(null);
@@ -308,6 +309,7 @@ export default function WhatsAppView({ privileged, superAdmin = false }: { privi
   function openGroup(group: ContactGroup) {
     setSelectedGroupId(group._id); setGroupMembers(group.memberIds);
     setGroupName(group.name); setGroupDescription(group.description || ""); setGroupColor(group.color);
+    setConfirmDeleteGroup(false);
   }
 
   async function createGroup(event: FormEvent<HTMLFormElement>) {
@@ -342,7 +344,7 @@ export default function WhatsAppView({ privileged, superAdmin = false }: { privi
 
   async function deleteGroup() {
     const group = groups.find((item) => item._id === selectedGroupId);
-    if (!group || !window.confirm(`Delete the group “${group.name}”? Contacts will stay in the CRM.`)) return;
+    if (!group) return;
     setBusy(true); setNotice("");
     try {
       await readApi<{ success: boolean }>(await fetch(`/api/whatsapp/groups?id=${encodeURIComponent(group._id)}`, { method: "DELETE" }));
@@ -351,6 +353,7 @@ export default function WhatsAppView({ privileged, superAdmin = false }: { privi
       if (remaining[0]) openGroup(remaining[0]);
       else { setSelectedGroupId(""); setGroupMembers([]); setGroupName(""); setGroupDescription(""); }
       if (audienceGroup === group._id) setAudienceGroup("all");
+      setConfirmDeleteGroup(false);
       setNotice(`“${group.name}” deleted. No contacts were removed from the CRM.`);
     } catch (error) { setNotice(error instanceof Error ? error.message : "Group could not be deleted."); }
     finally { setBusy(false); }
@@ -523,7 +526,8 @@ export default function WhatsAppView({ privileged, superAdmin = false }: { privi
           {!groups.length && <div className="wa-group-empty"><Users size={28}/><strong>No groups yet</strong><span>Create your first audience group.</span></div>}
         </aside>
         {selectedGroupId ? <div className="wa-group-editor">
-          <header><span><strong>Edit group</strong><small>{groupMembers.length} contact{groupMembers.length === 1 ? "" : "s"} selected</small></span><button type="button" className="wa-danger-icon" onClick={() => void deleteGroup()} disabled={busy} aria-label="Delete group" title="Delete group"><Trash2 size={17}/></button></header>
+          <header><span><strong>Edit group</strong><small>{groupMembers.length} contact{groupMembers.length === 1 ? "" : "s"} selected</small></span><button type="button" className="wa-danger-icon" onClick={() => setConfirmDeleteGroup(true)} disabled={busy} aria-label="Delete group" title="Delete group"><Trash2 size={17}/></button></header>
+          {confirmDeleteGroup && <div className="wa-group-delete-confirm" role="alert"><span><strong>Delete “{groupName}”?</strong><small>This removes only the group. Its contacts stay safely in the CRM.</small></span><div><button type="button" onClick={() => setConfirmDeleteGroup(false)} disabled={busy}>Cancel</button><button type="button" className="danger" onClick={() => void deleteGroup()} disabled={busy}>{busy ? "Deleting…" : "Delete group"}</button></div></div>}
           <div className="wa-group-fields"><label>Name<input value={groupName} maxLength={60} onChange={(event) => setGroupName(event.target.value)}/></label><label>Description<input value={groupDescription} maxLength={180} onChange={(event) => setGroupDescription(event.target.value)}/></label><label>Colour<select value={groupColor} onChange={(event) => setGroupColor(event.target.value as ContactGroup["color"])}><option value="green">Green</option><option value="blue">Blue</option><option value="violet">Violet</option><option value="orange">Orange</option><option value="rose">Rose</option></select></label></div>
           <div className="wa-group-member-tools"><label className="wa-search"><Search size={16}/><input value={groupSearch} onChange={(event) => setGroupSearch(event.target.value)} placeholder="Search CRM contacts" aria-label="Search group contacts"/></label><button type="button" onClick={() => setGroupMembers([...new Set([...groupMembers, ...groupCandidates.map((contact) => String(contact._id))])])}>Select shown</button><button type="button" onClick={() => setGroupMembers([])}>Clear</button></div>
           <div className="wa-group-members">{groupCandidates.map((contact) => <label key={contact._id}><input type="checkbox" checked={groupMembers.includes(String(contact._id))} onChange={() => toggleGroupMember(String(contact._id))}/><span className="wa-avatar">{contact.name?.trim().slice(0, 1).toUpperCase() || "?"}</span><span><strong>{contact.name}</strong><small>{contact.phone}</small></span>{contact.whatsappOptIn && <em>Opted in</em>}</label>)}</div>
