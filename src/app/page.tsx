@@ -13,6 +13,7 @@ import {
   LogOut,
   Mail,
   Menu,
+  MessagesSquare,
   MessageSquareText,
   MessageCircle,
   Smartphone,
@@ -30,6 +31,7 @@ import {
 } from "lucide-react";
 import WhatsAppView from "@/components/WhatsAppView";
 import SmsView from "@/components/SmsView";
+import MetaInboxView from "@/components/MetaInboxView";
 
 type Stage =
   | "New inquiry"
@@ -107,6 +109,7 @@ const nav = [
   ["Dashboard", LayoutDashboard],
   ["Leads & students", Users],
   ["WhatsApp", MessageCircle],
+  ["Social inbox", MessagesSquare],
   ["SMS", Smartphone],
   ["Office visitors", UserCheck],
   ["Tasks", ListTodo],
@@ -185,13 +188,13 @@ function mapLead(raw: Record<string, unknown>): Lead {
 
 export default function Home() {
   const [leads, setLeads] = useState<Lead[]>([]);
-  const [active, setActive] = useState("Dashboard");
+  const [active, setActive] = useState(() => typeof window !== "undefined" && new URLSearchParams(window.location.search).get("channel") === "meta" ? "Social inbox" : "Dashboard");
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<Lead | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [mobileNav, setMobileNav] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [appError, setAppError] = useState("");
+  const [appError, setAppError] = useState(() => typeof window !== "undefined" && new URLSearchParams(window.location.search).get("meta") === "failed" ? "Facebook/Instagram connection could not be completed. Check the Meta App setup and try again." : "");
   const [stageFilter, setStageFilter] = useState("All stages");
   const [counsellorFilter, setCounsellorFilter] = useState("All counsellors");
   const [tagFilter, setTagFilter] = useState("All tags");
@@ -200,6 +203,13 @@ export default function Home() {
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [todayVisits, setTodayVisits] = useState<VisitRecord[]>([]);
   const searchRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("channel") === "meta") {
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, []);
 
   useEffect(() => {
     fetch("/api/leads")
@@ -823,6 +833,8 @@ export default function Home() {
             />
           ) : active === "WhatsApp" ? (
             <WhatsAppView privileged={["super_admin", "admin", "manager"].includes(currentUser?.role || "")} superAdmin={currentUser?.role === "super_admin"} />
+          ) : active === "Social inbox" ? (
+            <MetaInboxView privileged={["super_admin", "admin", "manager"].includes(currentUser?.role || "")} />
           ) : active === "SMS" ? (
             <SmsView privileged={["super_admin", "admin", "manager"].includes(currentUser?.role || "")} />
           ) : active === "Team" ? (
