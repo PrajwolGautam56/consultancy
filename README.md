@@ -1,4 +1,4 @@
-# Admitly — Education Consultancy CRM
+# Connect Dots — Education Consultancy CRM
 
 A responsive consultancy operations MVP for lead capture, searchable student profiles, enquiry preferences, office visitor tracking, follow-up reminders, assignments, and an interaction timeline.
 

@@ -2,8 +2,8 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "AIMS Global Consultancy CRM",
-    short_name: "AIMS CRM",
+    name: "Connect Dots Consultancy CRM",
+    short_name: "Connect Dots",
     description: "Secure consultancy CRM for leads, students, office visits, follow-ups and team tasks.",
     start_url: "/",
     scope: "/",

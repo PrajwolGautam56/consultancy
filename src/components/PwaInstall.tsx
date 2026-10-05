@@ -25,5 +25,5 @@ export function PwaInstall() {
   },[]);
 
   if(hidden||!prompt)return null;
-  return <aside className="pwa-install" role="status"><Image src="/icon-192.png" alt="" width={46} height={46}/><span><strong>Install AIMS CRM</strong><small>Add a secure app shortcut to this device.</small></span><button className="pwa-install-action" onClick={async()=>{await prompt.prompt();const choice=await prompt.userChoice;if(choice.outcome==="accepted")setHidden(true)}}><Download size={16}/> Install</button><button className="pwa-install-close" aria-label="Dismiss install suggestion" onClick={()=>setHidden(true)}><X size={15}/></button></aside>;
+  return <aside className="pwa-install" role="status"><Image src="/icon-192.png" alt="" width={46} height={46}/><span><strong>Install Connect Dots</strong><small>Add a secure app shortcut to this device.</small></span><button className="pwa-install-action" onClick={async()=>{await prompt.prompt();const choice=await prompt.userChoice;if(choice.outcome==="accepted")setHidden(true)}}><Download size={16}/> Install</button><button className="pwa-install-close" aria-label="Dismiss install suggestion" onClick={()=>setHidden(true)}><X size={15}/></button></aside>;
 }

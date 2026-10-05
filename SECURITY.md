@@ -1,4 +1,4 @@
-# Admitly security and production deployment
+# Connect Dots security and production deployment
 
 ## Implemented application controls
 
