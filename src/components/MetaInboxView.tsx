@@ -73,7 +73,7 @@ export default function MetaInboxView({ privileged }: { privileged: boolean }) {
   async function syncHistory() {
     setBusy(true); setError(""); setNotice("Syncing recent conversations…");
     try {
-      const result = await readApi<{ imported: number; errors: string[] }>(await fetch("/api/meta/sync", { method: "POST" }));
+      const result = await readApi<{ imported: number; errors: string[] }>(await fetch("/api/meta/sync", { method: "POST", signal: AbortSignal.timeout(55_000) }));
       setNotice(`Sync complete: ${result.imported} messages checked.${result.errors.length ? ` ${result.errors[0]}` : ""}`); await load();
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Sync failed"); setNotice(""); }
     finally { setBusy(false); }

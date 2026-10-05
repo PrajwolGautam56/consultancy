@@ -13,11 +13,14 @@ async function syncPlatform(account: { _id: unknown; pageId: string; pageName: s
   const token = decryptMetaToken(account.encryptedPageAccessToken);
   const accountIdentity = platform === "instagram" ? account.instagramAccountId : account.pageId;
   if (!accountIdentity) return 0;
-  const path = `${account.pageId}/conversations?platform=${platform === "instagram" ? "instagram" : "messenger"}&fields=id,participants,messages.limit(50){id,message,from,to,created_time,attachments}&limit=40`;
-  const result = await metaGraph<{ data?: GraphConversation[] }>(path, token); let saved = 0;
-  for (const conversation of result.data || []) {
+  // Keep the initial import bounded so it completes within a serverless request.
+  // Webhooks take over for all new messages after this recent-history snapshot.
+  const path = `${account.pageId}/conversations?platform=${platform === "instagram" ? "instagram" : "messenger"}&fields=id,participants,messages.limit(20){id,message,from,to,created_time,attachments}&limit=25`;
+  const result = await metaGraph<{ data?: GraphConversation[] }>(path, token);
+  const saved = await Promise.all((result.data || []).map(async (conversation) => {
     const participant = (conversation.participants?.data || []).find((person) => person.id && person.id !== accountIdentity && person.id !== account.pageId);
     const messages = [...(conversation.messages?.data || [])].reverse();
+    let conversationSaved = 0;
     for (const message of messages) {
       const senderId = message.from?.id || ""; const recipients = message.to?.data || [];
       const inbound = senderId !== accountIdentity && senderId !== account.pageId;
@@ -31,10 +34,11 @@ async function syncPlatform(account: { _id: unknown; pageId: string; pageName: s
         text: message.message || "", attachments: (message.attachments?.data || []).map((attachment) => ({ type: attachment.mime_type || "file", url: attachment.image_data?.url || attachment.file_url })),
         occurredAt: new Date(message.created_time || Date.now()), status: inbound ? "received" : "sent",
       });
-      saved += 1;
+      conversationSaved += 1;
     }
-  }
-  return saved;
+    return conversationSaved;
+  }));
+  return saved.reduce((total, count) => total + count, 0);
 }
 
 export async function POST(request: NextRequest) {
