@@ -10,9 +10,14 @@ export async function GET(request: NextRequest) {
     const provider = smsProviderDefaults(providerId);
     if (!provider.configured) return { ...provider, balances: [], lastTransaction: null, error: `Add ${providerId === "samaya" ? "SAMAYA_SMS_API_KEY" : "SMSPASAL_SMS_API_KEY"} in the server environment` };
     const [balanceResult, transactionResult] = await Promise.allSettled([getSmsBalances(providerId), getSmsLastTransaction(providerId)]);
+    const balances = balanceResult.status === "fulfilled" ? balanceResult.value : [];
+    const activeRoute = balances.some((balance) => balance.routeId === provider.routeId)
+      ? provider.routeId
+      : balances[0]?.routeId || provider.routeId;
     return {
       ...provider,
-      balances: balanceResult.status === "fulfilled" ? balanceResult.value : [],
+      routeId: activeRoute,
+      balances,
       lastTransaction: transactionResult.status === "fulfilled" ? transactionResult.value : null,
       error: balanceResult.status === "rejected" ? (balanceResult.reason instanceof Error ? balanceResult.reason.message : "Balance could not be loaded") : "",
     };

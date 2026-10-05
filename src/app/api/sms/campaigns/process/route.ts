@@ -45,7 +45,10 @@ export async function POST(request: NextRequest) {
   }
   const remaining = campaign.recipients.some((recipient: { status: string }) => recipient.status === "pending");
   const unresolved = campaign.recipients.some((recipient: { status: string }) => recipient.status === "sending");
-  if (!remaining) { campaign.status = unresolved ? "needs_attention" : "completed"; campaign.completedAt = new Date(); }
+  if (!remaining) {
+    campaign.status = unresolved || campaign.failed > 0 ? "needs_attention" : "completed";
+    campaign.completedAt = new Date();
+  }
   campaign.processingLockUntil = undefined;
   campaign.markModified("recipients"); await campaign.save();
   return NextResponse.json({ done: !remaining, status: campaign.status, total: campaign.total, submitted: campaign.submitted, failed: campaign.failed });

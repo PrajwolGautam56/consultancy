@@ -60,9 +60,12 @@ const PROVIDERS: Record<SmsProviderId, {
     senderEnvironment: "SMSPASAL_SMS_SENDER_ID",
     routeEnvironment: "SMSPASAL_SMS_ROUTE_ID",
     campaignEnvironment: "SMSPASAL_SMS_CAMPAIGN_ID",
-    defaultRouteId: "10305",
+    // This account's active SMS Pasal route is returned by the balance API as
+    // 10259. Keep this fallback aligned with the previously working Kritech
+    // integration; the status endpoint will still prefer the live route list.
+    defaultRouteId: "10259",
     defaultCampaignId: "9835",
-    defaultSenderId: "TN_ALERT",
+    defaultSenderId: "TN_Alert",
   },
 };
 
@@ -80,12 +83,14 @@ export function smsConfigured(provider: SmsProviderId = "samaya") {
 
 export function smsProviderDefaults(provider: SmsProviderId = "samaya") {
   const config = providerConfig(provider);
+  const configuredSender = process.env[config.senderEnvironment]?.trim() || config.defaultSenderId;
+  const configuredRoute = process.env[config.routeEnvironment]?.trim() || config.defaultRouteId;
   return {
     id: provider,
     name: config.name,
     configured: smsConfigured(provider),
-    senderId: process.env[config.senderEnvironment]?.trim() || config.defaultSenderId,
-    routeId: process.env[config.routeEnvironment]?.trim() || config.defaultRouteId,
+    senderId: provider === "smspasal" && /^TN_ALERT$/i.test(configuredSender) ? config.defaultSenderId : configuredSender,
+    routeId: provider === "smspasal" && configuredRoute === "10305" ? config.defaultRouteId : configuredRoute,
     campaignId: process.env[config.campaignEnvironment]?.trim() || config.defaultCampaignId,
   };
 }
@@ -94,6 +99,49 @@ function safeProviderError(value: unknown, fallback: string) {
   const text = typeof value === "string" ? value.trim() : "";
   if (/^ERR:/i.test(text)) return text.replace(/^ERR:\s*/i, "").slice(0, 240);
   return fallback;
+}
+
+function stringValue(value: unknown) {
+  return typeof value === "string" || typeof value === "number" ? String(value).trim() : "";
+}
+
+export function parseSmsProviderResponse(providerName: string, responseText: string): SmsSendResult {
+  const raw = responseText.trim();
+  if (/^ERR:/i.test(raw)) throw new Error(safeProviderError(raw, `${providerName} rejected the request`));
+
+  let parsed: unknown = null;
+  try { parsed = JSON.parse(raw); } catch { /* Some provider responses are plain text. */ }
+  const record = parsed && typeof parsed === "object" && !Array.isArray(parsed)
+    ? parsed as Record<string, unknown>
+    : null;
+  const data = record?.data && typeof record.data === "object" && !Array.isArray(record.data)
+    ? record.data as Record<string, unknown>
+    : null;
+  const resultText = typeof parsed === "string" ? parsed : raw;
+  const searchable = record ? JSON.stringify(record) : resultText;
+  const responseCode = Number(record?.response_code ?? record?.status_code ?? 0);
+  const providerError = stringValue(record?.error)
+    || (responseCode >= 400 ? stringValue(record?.message) || `request rejected (${responseCode})` : "");
+  if (providerError) throw new Error(`${providerName}: ${providerError}`.slice(0, 500));
+
+  const explicit = stringValue(record?.shoot_id)
+    || stringValue(record?.shootId)
+    || stringValue(record?.sms_shoot_id)
+    || stringValue(data?.shoot_id)
+    || stringValue(data?.shootId);
+  const match = resultText.match(/SMS-SHOOT-ID[\/":\s]+\{?([A-Za-z0-9_-]+)\}?/i)
+    || searchable.match(/SMS-SHOOT-ID[\\/":\s]+\{?([A-Za-z0-9_-]+)\}?/i);
+  const shootId = (explicit || match?.[1] || "")
+    .replace(/^SMS-SHOOT-ID\//i, "")
+    .replace(/[{}]/g, "")
+    .trim();
+  if (!shootId) {
+    const message = stringValue(record?.message) || stringValue(record?.response);
+    throw new Error((message
+      ? `${providerName}: ${message}`
+      : `${providerName} returned an unexpected response: ${raw.slice(0, 240) || "empty response"}`).slice(0, 500));
+  }
+  return { shootId, rawResponse: raw.slice(0, 500) };
 }
 
 async function providerFetch(url: string, init?: RequestInit) {
@@ -176,11 +224,13 @@ export async function sendSms(provider: SmsProviderId, input: SmsSendInput): Pro
   const phone = normalizeSmsPhone(input.phone);
   if (!/^9\d{9}$/.test(phone)) throw new Error("A valid Nepal mobile number is required");
   const estimate = estimateSmsCredits(input.message);
+  const senderId = provider === "smspasal" && /^TN_ALERT$/i.test(input.senderId) ? config.defaultSenderId : input.senderId;
+  const routeId = provider === "smspasal" && input.routeId === "10305" ? config.defaultRouteId : input.routeId;
   const body = new URLSearchParams({
-    key, type: estimate.encoding, contacts: phone, senderid: input.senderId,
+    key, type: estimate.encoding, contacts: phone, senderid: senderId,
     msg: input.message, responsetype: "json",
   });
-  if (input.routeId) body.set("routeid", input.routeId);
+  if (routeId) body.set("routeid", routeId);
   if (input.campaignId) body.set("campaign", input.campaignId);
   if (input.scheduledAt) {
     const parts = new Intl.DateTimeFormat("en-CA", {
@@ -190,21 +240,10 @@ export async function sendSms(provider: SmsProviderId, input: SmsSendInput): Pro
     const local = `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`;
     body.set("time", local);
   }
-  const text = (await providerFetch(config.smsUrl, {
+  const text = await providerFetch(config.smsUrl, {
     method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body,
-  })).trim();
-  let shootId = "";
-  const plain = text.match(/SMS-SHOOT-ID\/?\{?([A-Za-z0-9_-]+)\}?/i);
-  if (plain) shootId = plain[1];
-  if (!shootId) {
-    try {
-      const json = JSON.parse(text) as Record<string, unknown>;
-      const candidate = String(json.shoot_id || json.sms_shoot_id || json.id || json.response || "");
-      shootId = candidate.replace(/^SMS-SHOOT-ID\//i, "").replace(/[{}]/g, "");
-    } catch { /* Samaya commonly returns plain text. */ }
-  }
-  if (!shootId) throw new Error(safeProviderError(text, `${config.name} did not return an SMS shoot ID`));
-  return { shootId, rawResponse: text.slice(0, 500) };
+  });
+  return parseSmsProviderResponse(config.name, text);
 }
 
 export async function getSmsDeliveryReport(provider: SmsProviderId, shootId: string): Promise<SmsDelivery[]> {

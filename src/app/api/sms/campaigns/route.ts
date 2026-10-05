@@ -19,7 +19,14 @@ export async function GET(request: NextRequest) {
   const session = await requireSession(request); if (session instanceof NextResponse) return session;
   if (!isPrivileged(session.role)) return NextResponse.json({ error: "Not authorized" }, { status: 403 });
   await connectMongo();
-  const campaigns = await SmsCampaign.find().select("-recipients.renderedMessage").sort({ createdAt: -1 }).limit(40).lean();
+  const documents = await SmsCampaign.find().select("-recipients.renderedMessage").sort({ createdAt: -1 }).limit(40).lean();
+  const campaigns = documents.map((campaign) => {
+    const recipients = Array.isArray(campaign.recipients) ? campaign.recipients : [];
+    const lastError = [...recipients].reverse().find((recipient) => recipient.error)?.error || "";
+    const summary = { ...campaign };
+    delete (summary as { recipients?: unknown }).recipients;
+    return { ...summary, lastError };
+  });
   return NextResponse.json({ campaigns, configured: smsConfigured() });
 }
 
