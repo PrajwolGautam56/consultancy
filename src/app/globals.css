@@ -136,3 +136,11 @@
 .wa-import-pages button:disabled{opacity:.45}
 @media(max-width:850px){.wa-audience-tools{grid-template-columns:repeat(2,minmax(0,1fr))!important}.wa-audience-tools button{justify-content:center}}
 @media(max-width:650px){.wa-audience-tools button{min-height:44px;height:auto;white-space:normal}.wa-bulk-consent input:not([type]){font-size:16px}.wa-import-wizard>label:not(.wa-consent) input{font-size:16px}}
+.wa-audience{min-height:0;overflow:hidden}
+.wa-audience>.wa-audience-list{flex:1 1 auto;min-height:100px;max-height:none!important;overflow:auto}
+.wa-audience>.wa-bulk-consent{flex:none;max-height:none!important;overflow:visible!important;padding:12px 14px;background:#f1f9f4;border-top:1px solid #d3e7db}
+.wa-bulk-consent>strong{display:block;font-size:11px;color:#256a44;margin-bottom:5px}
+.wa-bulk-consent>button{min-height:40px;border:1px solid #228c53;border-radius:8px;background:#238a53;color:#fff;padding:0 12px;font-size:10px;font-weight:800}
+.wa-bulk-consent>button:disabled{opacity:.5;cursor:not-allowed}
+.wa-audience>footer{flex:none}
+@media(max-width:650px){.wa-audience{overflow:visible}.wa-audience>.wa-audience-list{flex:none;max-height:320px!important}.wa-audience>.wa-bulk-consent{padding:12px}.wa-bulk-consent>button{width:100%;min-height:46px;font-size:12px}}
