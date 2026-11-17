@@ -5,7 +5,7 @@ import { isPrivileged, requireSameOrigin, requireSession } from "@/lib/api-secur
 import { Lead } from "@/models/Lead";
 import { WhatsAppCampaign } from "@/models/WhatsAppCampaign";
 import { WhatsAppMessage } from "@/models/WhatsAppMessage";
-import { getApprovedWhatsAppTemplates, normalizeWhatsAppPhone, whatsappConfigured } from "@/lib/whatsapp";
+import { getApprovedWhatsAppTemplates, normalizeWhatsAppPhone, templateComponents, whatsappConfigured } from "@/lib/whatsapp";
 
 const createSchema = z.object({
   name: z.string().trim().min(2).max(120),
@@ -53,9 +53,11 @@ export async function POST(request: NextRequest) {
   }
   if (!template) return NextResponse.json({ error: "This template is not approved in the configured Meta WABA" }, { status: 409 });
   if (parsed.data.bodyParameters.length !== template.parameterCount) return NextResponse.json({ error: `This template needs ${template.parameterCount} body value(s)` }, { status: 400 });
+  try { templateComponents(template, parsed.data.bodyParameters); }
+  catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "Unsupported template header" }, { status: 409 }); }
   await connectMongo();
   const leads = await Lead.find({ _id: { $in: parsed.data.leadIds }, archivedAt: null, whatsappOptIn: true, whatsappOptOutAt: null }).select("name phone").lean();
   if (!leads.length) return NextResponse.json({ error: "None of the selected students has recorded WhatsApp consent" }, { status: 409 });
-  const campaign = await WhatsAppCampaign.create({ ...parsed.data, templateBody: template.body, recipients: leads.map((lead) => ({ leadId: lead._id, name: lead.name, phone: normalizeWhatsAppPhone(lead.phone), status: "pending" })), total: leads.length, createdBy: session.userId, createdByName: session.name });
+  const campaign = await WhatsAppCampaign.create({ ...parsed.data, templateBody: template.body, headerImageUrl: template.headerImageUrl || "", recipients: leads.map((lead) => ({ leadId: lead._id, name: lead.name, phone: normalizeWhatsAppPhone(lead.phone), status: "pending" })), total: leads.length, createdBy: session.userId, createdByName: session.name });
   return NextResponse.json({ campaign: { _id: campaign._id, total: campaign.total, status: campaign.status } }, { status: 201 });
 }

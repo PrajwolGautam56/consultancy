@@ -21,10 +21,13 @@ export async function POST(request: NextRequest) {
   await Promise.all(pending.map(async (recipient: { leadId: unknown; name: string; phone: string; status: string; messageId?: string; error?: string }) => {
     const resolved = campaign.bodyParameters.map((value: string) => value.replaceAll("{{name}}", recipient.name));
     const parameters = resolved.map((text: string) => ({ type: "text", text }));
-    const components = parameters.length ? [{ type: "body", parameters }] : undefined;
+    const components = [
+      ...(campaign.headerImageUrl ? [{ type: "header", parameters: [{ type: "image", image: { link: campaign.headerImageUrl } }] }] : []),
+      ...(parameters.length ? [{ type: "body", parameters }] : []),
+    ];
     let messageId: string;
     try {
-      messageId = await sendWhatsApp({ to: recipient.phone, type: "template", template: { name: campaign.templateName, language: { code: campaign.language }, ...(components ? { components } : {}) } });
+      messageId = await sendWhatsApp({ to: recipient.phone, type: "template", template: { name: campaign.templateName, language: { code: campaign.language }, ...(components.length ? { components } : {}) } });
     } catch (error) { recipient.status = "failed"; recipient.error = error instanceof Error ? error.message.slice(0, 500) : "Send failed"; campaign.failed += 1; }
     if (!messageId!) return;
     recipient.status = "sent"; recipient.messageId = messageId; campaign.sent += 1;

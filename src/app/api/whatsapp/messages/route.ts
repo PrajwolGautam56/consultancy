@@ -4,7 +4,7 @@ import { connectMongo } from "@/lib/mongodb";
 import { requireSameOrigin, requireSession } from "@/lib/api-security";
 import { Lead } from "@/models/Lead";
 import { WhatsAppMessage } from "@/models/WhatsAppMessage";
-import { getApprovedWhatsAppTemplates, normalizeWhatsAppPhone, renderWhatsAppTemplate, sendWhatsApp, whatsappConfigured, whatsappPhonePatterns, whatsappWebhookConfigured } from "@/lib/whatsapp";
+import { getApprovedWhatsAppTemplates, normalizeWhatsAppPhone, renderWhatsAppTemplate, sendWhatsApp, templateComponents, whatsappConfigured, whatsappPhonePatterns, whatsappWebhookConfigured } from "@/lib/whatsapp";
 
 const objectId = z.string().regex(/^[a-f\d]{24}$/i);
 const waIdSchema = z.string().regex(/^\d{8,15}$/);
@@ -159,6 +159,7 @@ export async function POST(request: NextRequest) {
   }
   let templateBody = "";
   let resolvedParameters: string[] = [];
+  let sendComponents: Array<Record<string, unknown>> = [];
   if (isTemplate) {
     let template;
     try {
@@ -169,6 +170,8 @@ export async function POST(request: NextRequest) {
     if (!template) return NextResponse.json({ error: "This template is not approved in the configured Meta WABA" }, { status: 409 });
     if (input.bodyParameters.length !== template.parameterCount) return NextResponse.json({ error: `This template needs ${template.parameterCount} body value(s)` }, { status: 400 });
     resolvedParameters = input.bodyParameters.map((value) => value.replaceAll("{{name}}", lead?.name || ""));
+    try { sendComponents = templateComponents(template, resolvedParameters); }
+    catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "Unsupported template header" }, { status: 409 }); }
     templateBody = template.body ? renderWhatsAppTemplate(template.body, resolvedParameters) : `Template: ${input.templateName}`;
   }
   if (!isTemplate) {
@@ -183,7 +186,7 @@ export async function POST(request: NextRequest) {
   const payload = isTemplate
     ? { to: waId, type: "template", template: {
       name: input.templateName, language: { code: input.language },
-      ...(resolvedParameters.length ? { components: [{ type: "body", parameters: resolvedParameters.map((text) => ({ type: "text", text })) }] } : {}),
+      ...(sendComponents.length ? { components: sendComponents } : {}),
     } }
     : { to: waId, type: "text", text: { body: input.text } };
   let waMessageId: string;

@@ -37,7 +37,24 @@ export function verifyMetaSignature(rawBody: string, signature: string | null) {
 
 export type ApprovedWhatsAppTemplate = {
   name: string; language: string; category: string; parameterCount: number; body: string;
+  headerFormat?: string; headerImageUrl?: string;
 };
+
+const campaignImageHeaders: Record<string, string> = {
+  aims_cee_result_wishes_2026: "https://crm.aimsglobal.com.np/aims-cee-best-wishes-2026.png",
+};
+
+export function templateComponents(template: ApprovedWhatsAppTemplate, bodyParameters: string[]) {
+  const components: Array<Record<string, unknown>> = [];
+  if (template.headerFormat && template.headerFormat !== "TEXT") {
+    if (template.headerFormat !== "IMAGE" || !template.headerImageUrl) {
+      throw new Error(`The ${template.name} template has an unsupported media header`);
+    }
+    components.push({ type: "header", parameters: [{ type: "image", image: { link: template.headerImageUrl } }] });
+  }
+  if (bodyParameters.length) components.push({ type: "body", parameters: bodyParameters.map((value) => ({ type: "text", text: value })) });
+  return components;
+}
 
 let templateCache: { accountId: string; expiresAt: number; templates: ApprovedWhatsAppTemplate[] } | null = null;
 
@@ -55,14 +72,15 @@ export async function getApprovedWhatsAppTemplates(): Promise<ApprovedWhatsAppTe
     headers: { Authorization: `Bearer ${token}` }, cache: "no-store",
   });
   const data = await response.json() as {
-    data?: Array<{ name: string; status: string; category: string; language: string; components?: Array<{ type?: string; text?: string }> }>;
+    data?: Array<{ name: string; status: string; category: string; language: string; components?: Array<{ type?: string; text?: string; format?: string }> }>;
     error?: { message?: string };
   };
   if (!response.ok) throw new Error(data.error?.message || `Meta template request failed (${response.status})`);
   const templates = (data.data || []).filter((item) => item.status === "APPROVED").map((item) => {
     const body = item.components?.find((component) => component.type === "BODY")?.text || "";
+    const headerFormat = item.components?.find((component) => component.type === "HEADER")?.format;
     const parameterCount = Math.max(0, ...Array.from(body.matchAll(/\{\{(\d+)\}\}/g), (match) => Number(match[1])));
-    return { name: item.name, language: item.language, category: item.category, parameterCount, body };
+    return { name: item.name, language: item.language, category: item.category, parameterCount, body, headerFormat, headerImageUrl: headerFormat === "IMAGE" ? campaignImageHeaders[item.name] : undefined };
   });
   templateCache = { accountId, expiresAt: Date.now() + 60_000, templates };
   return templates;
