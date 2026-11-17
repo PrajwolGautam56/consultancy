@@ -4,7 +4,7 @@ import { SESSION_COOKIE, verifySessionToken } from "@/lib/auth";
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const isLogin = pathname === "/login";
-  const isPublicPage = isLogin || pathname === "/forgot-password" || pathname === "/reset-password";
+  const isPublicPage = isLogin || pathname === "/forgot-password" || pathname === "/reset-password" || pathname === "/aims-cee-best-wishes-2026.png";
   const isPublicApi = ["/api/auth/login", "/api/auth/forgot-password", "/api/auth/reset-password", "/api/whatsapp/webhook", "/api/meta/webhook"].includes(pathname);
   const token = request.cookies.get(SESSION_COOKIE)?.value;
   let authenticated = false;
