@@ -11,7 +11,7 @@ const createSchema = z.object({
   name: z.string().trim().min(2).max(120),
   templateName: z.string().trim().regex(/^[a-z0-9_]+$/).max(512),
   language: z.string().trim().min(2).max(20).default("en"),
-  leadIds: z.array(z.string().regex(/^[a-f\d]{24}$/i)).min(1).max(1000),
+  leadIds: z.array(z.string().regex(/^[a-f\d]{24}$/i)).min(1).max(10000),
   bodyParameters: z.array(z.string().trim().max(500)).max(10).default([]),
 }).strict();
 
@@ -56,7 +56,7 @@ export async function POST(request: NextRequest) {
   try { templateComponents(template, parsed.data.bodyParameters); }
   catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "Unsupported template header" }, { status: 409 }); }
   await connectMongo();
-  const leads = await Lead.find({ _id: { $in: parsed.data.leadIds }, archivedAt: null, whatsappOptIn: true, whatsappOptOutAt: null }).select("name phone").lean();
+  const leads = await Lead.find({ _id: { $in: [...new Set(parsed.data.leadIds)] }, archivedAt: null, whatsappOptIn: true, whatsappOptOutAt: null }).select("name phone").lean();
   if (!leads.length) return NextResponse.json({ error: "None of the selected students has recorded WhatsApp consent" }, { status: 409 });
   const campaign = await WhatsAppCampaign.create({ ...parsed.data, templateBody: template.body, headerImageUrl: template.headerImageUrl || "", recipients: leads.map((lead) => ({ leadId: lead._id, name: lead.name, phone: normalizeWhatsAppPhone(lead.phone), status: "pending" })), total: leads.length, createdBy: session.userId, createdByName: session.name });
   return NextResponse.json({ campaign: { _id: campaign._id, total: campaign.total, status: campaign.status } }, { status: 201 });

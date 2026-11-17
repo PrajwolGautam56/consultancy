@@ -85,7 +85,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ messages: found.slice(0, 50).reverse(), hasMore: found.length > 50, lastInboundAt: inbound?.occurredAt || null });
   }
 
-  const allowed = await Lead.find({ ...leadAccess(session), archivedAt: null }).select("_id name phone whatsappOptIn").lean() as unknown as LeadSummary[];
+  const allowed = await Lead.find({ ...leadAccess(session), archivedAt: null }).select("_id name phone tags whatsappOptIn whatsappOptOutAt").lean() as unknown as LeadSummary[];
   const leadById = new Map(allowed.map((lead) => [String(lead._id), lead]));
   const leadByWaId = new Map(allowed.map((lead) => [normalizeWhatsAppPhone(lead.phone), lead]));
   const leadIds = allowed.map((lead) => lead._id);

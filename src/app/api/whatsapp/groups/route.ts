@@ -17,7 +17,7 @@ const updateSchema = z.object({
   name: z.string().trim().min(2).max(60).optional(),
   description: z.string().trim().max(180).optional(),
   color: color.optional(),
-  memberIds: z.array(objectId).max(5000).optional(),
+  memberIds: z.array(objectId).max(10000).optional(),
 }).strict();
 
 function denied() {

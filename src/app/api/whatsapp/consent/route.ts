@@ -4,7 +4,7 @@ import { connectMongo } from "@/lib/mongodb";
 import { Lead } from "@/models/Lead";
 import { isPrivileged, requireSameOrigin, requireSession } from "@/lib/api-security";
 
-const schema = z.object({ leadIds: z.array(z.string().regex(/^[a-f\d]{24}$/i)).min(1).max(1000), optedIn: z.boolean(), source: z.string().trim().min(2).max(120) }).strict();
+const schema = z.object({ leadIds: z.array(z.string().regex(/^[a-f\d]{24}$/i)).min(1).max(1000), optedIn: z.boolean(), source: z.string().trim().min(3).max(120), consentConfirmed: z.boolean().optional() }).strict();
 
 export async function POST(request: NextRequest) {
   const session = await requireSession(request); if (session instanceof NextResponse) return session;
@@ -12,6 +12,7 @@ export async function POST(request: NextRequest) {
   if (!requireSameOrigin(request)) return NextResponse.json({ error: "Invalid request origin" }, { status: 403 });
   const parsed = schema.safeParse(await request.json());
   if (!parsed.success) return NextResponse.json({ error: "Invalid consent details" }, { status: 400 });
+  if (parsed.data.optedIn && !parsed.data.consentConfirmed) return NextResponse.json({ error: "Confirm and record where these students agreed to WhatsApp messages" }, { status: 400 });
   await connectMongo(); const now = new Date();
   const set = parsed.data.optedIn
     ? { whatsappOptIn: true, whatsappOptInAt: now, whatsappOptInSource: parsed.data.source, whatsappOptOutAt: null }

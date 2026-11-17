@@ -4,7 +4,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "re
 import Image from "next/image";
 import { AlertCircle, ArrowLeft, Check, CheckCheck, ChevronDown, Clock3, FileText, ImagePlus, Inbox, Loader2, Megaphone, MessageCircle, Plus, RefreshCw, Search, Send, ShieldCheck, Trash2, Upload, Users, X } from "lucide-react";
 
-type Contact = { _id: string; name: string; phone: string; whatsappOptIn?: boolean; unlinked?: boolean };
+type Contact = { _id: string; name: string; phone: string; tags?: string[]; whatsappOptIn?: boolean; whatsappOptOutAt?: string | null; unlinked?: boolean };
 type Message = { _id: string; leadId?: string | null; waId?: string; direction: "inbound" | "outbound"; type?: string; body: string; mediaId?: string; mimeType?: string; status: string; error?: string; occurredAt: string };
 type Conversation = { conversationId: string; lastMessage: Message };
 type Campaign = { _id: string; name: string; status: string; total: number; sent: number; failed: number; accepted?: number; delivered?: number; read?: number; deliveryFailed?: number; lastDeliveryError?: string; createdAt: string };
@@ -76,7 +76,7 @@ function detectImportMapping(data: ImportCell[][]) {
 }
 
 function rowsFromImport(data: ImportCell[][], headerRow: number, nameColumn: number, phoneColumn: number): ImportRow[] {
-  return data.slice(headerRow + 1).map((row) => ({ name: importCellText(row[nameColumn]), phone: importCellText(row[phoneColumn]) })).filter((row) => row.name || row.phone).slice(0, 1000);
+  return data.slice(headerRow + 1).map((row) => ({ name: importCellText(row[nameColumn]), phone: importCellText(row[phoneColumn]) })).filter((row) => row.name || row.phone).slice(0, 10000);
 }
 
 function MessageBody({ message }: { message: Message }) {
@@ -119,7 +119,10 @@ export default function WhatsAppView({ privileged, superAdmin = false }: { privi
   const [checked, setChecked] = useState<string[]>([]);
   const [search, setSearch] = useState("");
   const [audienceSearch, setAudienceSearch] = useState("");
-  const [audienceGroup, setAudienceGroup] = useState("all");
+  const [audienceGroups, setAudienceGroups] = useState<string[]>([]);
+  const [audienceTags, setAudienceTags] = useState<string[]>([]);
+  const [audienceConsentSource, setAudienceConsentSource] = useState("");
+  const [audienceConsentConfirmed, setAudienceConsentConfirmed] = useState(false);
   const [selectedGroupId, setSelectedGroupId] = useState("");
   const [groupMembers, setGroupMembers] = useState<string[]>([]);
   const [groupName, setGroupName] = useState("");
@@ -153,10 +156,12 @@ export default function WhatsAppView({ privileged, superAdmin = false }: { privi
   const [importNameColumn, setImportNameColumn] = useState(0);
   const [importPhoneColumn, setImportPhoneColumn] = useState(1);
   const [importRows, setImportRows] = useState<ImportRow[]>([]);
+  const [importPreviewPage, setImportPreviewPage] = useState(0);
   const [importFileName, setImportFileName] = useState("");
   const [importFileError, setImportFileError] = useState("");
   const [importGroupId, setImportGroupId] = useState("");
-  const [consentConfirmed, setConsentConfirmed] = useState(true);
+  const [consentConfirmed, setConsentConfirmed] = useState(false);
+  const [importConsentSource, setImportConsentSource] = useState("");
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -295,9 +300,11 @@ export default function WhatsAppView({ privileged, superAdmin = false }: { privi
   const chatContacts = useMemo(() => contacts.filter((contact) => lastMessageById.has(String(contact._id)))
     .sort((a, b) => new Date(lastMessageById.get(String(b._id))?.occurredAt || 0).getTime() - new Date(lastMessageById.get(String(a._id))?.occurredAt || 0).getTime()), [contacts, lastMessageById]);
   const displayedContacts = (inboxTab === "chats" ? chatContacts : contacts).filter((contact) => `${contact.name} ${contact.phone}`.toLowerCase().includes(search.trim().toLowerCase()));
-  const activeAudienceGroup = groups.find((group) => group._id === audienceGroup);
+  const availableTags = [...new Set(contacts.flatMap((contact) => contact.tags || []))].sort((a, b) => a.localeCompare(b));
+  const selectedGroupMemberIds = new Set(groups.filter((group) => audienceGroups.includes(group._id)).flatMap((group) => group.memberIds));
   const filteredAudience = contacts.filter((contact) => !contact.unlinked &&
-    (!activeAudienceGroup || activeAudienceGroup.memberIds.includes(String(contact._id))) &&
+    (!audienceGroups.length || selectedGroupMemberIds.has(String(contact._id))) &&
+    (!audienceTags.length || audienceTags.some((tag) => contact.tags?.includes(tag))) &&
     `${contact.name} ${contact.phone}`.toLowerCase().includes(audienceSearch.trim().toLowerCase()));
   const groupCandidates = contacts.filter((contact) => !contact.unlinked && `${contact.name} ${contact.phone}`.toLowerCase().includes(groupSearch.trim().toLowerCase()));
   const selected = contactById.get(selectedContact);
@@ -305,7 +312,7 @@ export default function WhatsAppView({ privileged, superAdmin = false }: { privi
   const lastInboundTime = lastInboundAt !== undefined ? lastInboundAt : latestInbound?.occurredAt;
   const replyWindowEnds = lastInboundTime ? new Date(lastInboundTime).getTime() + 24 * 60 * 60 * 1000 : 0;
   const canReply = replyWindowEnds > now;
-  const optedInSelected = checked.filter((id) => contacts.find((contact) => String(contact._id) === id)?.whatsappOptIn);
+  const optedInSelected = checked.filter((id) => { const contact = contactById.get(id); return contact?.whatsappOptIn && !contact.whatsappOptOutAt; });
   const oneTemplate = templates.find((item) => item.name === selectedOneTemplate);
   const campaignTemplate = templates.find((item) => item.name === selectedTemplate);
   const activeImportSheet = importSheets.find((sheet) => sheet.sheet === importSheetName);
@@ -358,8 +365,11 @@ export default function WhatsAppView({ privileged, superAdmin = false }: { privi
   function toggle(id: string) { setChecked((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]); }
 
   function selectAudience(ids: string[]) {
-    setChecked([...new Set(ids.filter((id) => contacts.some((contact) => String(contact._id) === id && contact.whatsappOptIn)))]);
+    setChecked([...new Set(ids.filter((id) => { const contact = contactById.get(id); return contact && !contact.whatsappOptOutAt; }))]);
   }
+
+  function toggleAudienceGroup(id: string) { setAudienceGroups((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]); setChecked([]); }
+  function toggleAudienceTag(tag: string) { setAudienceTags((current) => current.includes(tag) ? current.filter((item) => item !== tag) : [...current, tag]); setChecked([]); }
 
   function toggleGroupMember(id: string) {
     setGroupMembers((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
@@ -411,7 +421,7 @@ export default function WhatsAppView({ privileged, superAdmin = false }: { privi
       setGroups(remaining);
       if (remaining[0]) openGroup(remaining[0]);
       else { setSelectedGroupId(""); setGroupMembers([]); setGroupName(""); setGroupDescription(""); }
-      if (audienceGroup === group._id) setAudienceGroup("all");
+      setAudienceGroups((current) => current.filter((id) => id !== group._id));
       setConfirmDeleteGroup(false);
       setNotice(`“${group.name}” deleted. No contacts were removed from the CRM.`);
     } catch (error) { setNotice(error instanceof Error ? error.message : "Group could not be deleted."); }
@@ -420,10 +430,17 @@ export default function WhatsAppView({ privileged, superAdmin = false }: { privi
 
   async function recordConsent(optedIn: boolean) {
     if (!checked.length) return setNotice("Select at least one student first.");
+    if (optedIn && (!audienceConsentConfirmed || audienceConsentSource.trim().length < 3)) return setNotice("Confirm consent and enter where the selected students agreed to WhatsApp messages.");
     setBusy(true); setNotice("");
     try {
-      const data = await readApi<{ updated: number }>(await fetch("/api/whatsapp/consent", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ leadIds: checked, optedIn, source: optedIn ? "Recorded by staff in CRM" : "Student opted out" }) }));
-      setNotice(`${data.updated} student consent record(s) updated.`); setChecked([]); await refreshInbox();
+      let updated = 0;
+      for (let index = 0; index < checked.length; index += 1000) {
+        const data = await readApi<{ updated: number }>(await fetch("/api/whatsapp/consent", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ leadIds: checked.slice(index, index + 1000), optedIn, source: optedIn ? audienceConsentSource.trim() : "Student opted out", ...(optedIn ? { consentConfirmed: true } : {}) }) }));
+        updated += data.updated; setNotice(`Updating consent: ${Math.min(index + 1000, checked.length)}/${checked.length}`);
+      }
+      setNotice(`${updated} student consent record(s) updated. ${optedIn ? "The selected audience is ready for an approved template." : "Selected contacts were opted out."}`);
+      if (!optedIn) setChecked([]);
+      setAudienceConsentConfirmed(false); await refreshInbox();
     } catch (error) { setNotice(error instanceof Error ? error.message : "Consent could not be updated."); }
     finally { setBusy(false); }
   }
@@ -435,7 +452,7 @@ export default function WhatsAppView({ privileged, superAdmin = false }: { privi
       const data = await readApi<{ updated: number }>(await fetch("/api/whatsapp/consent", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ leadIds: [selected._id], optedIn: true, source: "Consent confirmed by staff in CRM chat" }),
+        body: JSON.stringify({ leadIds: [selected._id], optedIn: true, consentConfirmed: true, source: "Consent confirmed by staff in CRM chat" }),
       }));
       setNotice(data.updated ? `${selected.name}'s WhatsApp opt-in was recorded.` : "This student's opt-in was already recorded.");
       await refreshInbox();
@@ -495,14 +512,26 @@ export default function WhatsAppView({ privileged, superAdmin = false }: { privi
     const bodyParameters = Array.from({ length: campaignTemplate?.parameterCount || 0 }, (_, index) => index === 0 ? "{{name}}" : String(form.get(`parameter${index + 1}`) || ""));
     try {
       const data = await readApi<{ campaign: { _id: string; total: number } }>(await fetch("/api/whatsapp/campaigns", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: form.get("name"), templateName: selectedTemplate, language: campaignTemplate?.language || "en_US", leadIds: optedInSelected, bodyParameters }) }));
-      let done = false; let progress = { sent: 0, failed: 0, total: data.campaign.total };
-      while (!done) {
-        const result = await readApi<{ done: boolean; sent: number; failed: number; total: number }>(await fetch("/api/whatsapp/campaigns/process", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ campaignId: data.campaign._id }) }));
-        done = result.done; progress = result; setNotice(`Sending: ${result.sent + result.failed}/${result.total}`);
-      }
-      setChecked([]); setNotice(`Campaign submitted: ${progress.sent} accepted by Meta, ${progress.failed} rejected immediately. Delivery receipts may take a moment.`);
-      await refreshInbox(true); await refreshMetadata();
+      await processCampaign(data.campaign._id);
+      setChecked([]);
     } catch (error) { setNotice(error instanceof Error ? error.message : "Campaign paused."); }
+    finally { setBusy(false); }
+  }
+
+  async function processCampaign(campaignId: string) {
+    let done = false; let progress = { sent: 0, failed: 0, total: 0 };
+    while (!done) {
+      const result = await readApi<{ done: boolean; sent: number; failed: number; total: number }>(await fetch("/api/whatsapp/campaigns/process", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ campaignId }) }));
+      done = result.done; progress = result; setNotice(`Sending: ${result.sent + result.failed}/${result.total}. Keep this tab open.`);
+    }
+    setNotice(`Campaign finished: ${progress.sent} accepted by Meta, ${progress.failed} rejected immediately. Check delivery receipts below.`);
+    await refreshInbox(true); await refreshMetadata();
+  }
+
+  async function resumeCampaign(campaignId: string) {
+    setBusy(true); setNotice("Resuming campaign…");
+    try { await processCampaign(campaignId); }
+    catch (error) { setNotice(error instanceof Error ? error.message : "Campaign paused. You can resume it later."); }
     finally { setBusy(false); }
   }
 
@@ -519,13 +548,13 @@ export default function WhatsAppView({ privileged, superAdmin = false }: { privi
     const mapping = detectImportMapping(sheet.data);
     setImportSheetName(sheetName); setImportHeaderRow(mapping.headerRow);
     setImportNameColumn(mapping.nameColumn); setImportPhoneColumn(mapping.phoneColumn);
-    setImportRows(rowsFromImport(sheet.data, mapping.headerRow, mapping.nameColumn, mapping.phoneColumn));
+    setImportRows(rowsFromImport(sheet.data, mapping.headerRow, mapping.nameColumn, mapping.phoneColumn)); setImportPreviewPage(0);
   }
 
   function remapImport(headerRow = importHeaderRow, nameColumn = importNameColumn, phoneColumn = importPhoneColumn) {
     if (!activeImportSheet) return;
     setImportHeaderRow(headerRow); setImportNameColumn(nameColumn); setImportPhoneColumn(phoneColumn);
-    setImportRows(rowsFromImport(activeImportSheet.data, headerRow, nameColumn, phoneColumn));
+    setImportRows(rowsFromImport(activeImportSheet.data, headerRow, nameColumn, phoneColumn)); setImportPreviewPage(0);
   }
 
   async function loadImportFile(file?: File) {
@@ -552,7 +581,7 @@ export default function WhatsAppView({ privileged, superAdmin = false }: { privi
   function usePastedImport() {
     const parsed = parseImport();
     if (!parsed.length) return setImportFileError("Paste Name and Phone values, one student per line.");
-    setImportSheets([]); setImportSheetName(""); setImportFileName("Pasted rows"); setImportRows(parsed); setImportFileError("");
+    setImportSheets([]); setImportSheetName(""); setImportFileName("Pasted rows"); setImportRows(parsed); setImportPreviewPage(0); setImportFileError("");
   }
 
   function updateImportRow(index: number, field: keyof ImportRow, value: string) {
@@ -562,14 +591,20 @@ export default function WhatsAppView({ privileged, superAdmin = false }: { privi
   async function importContacts() {
     const parsed = validImportRows;
     if (!parsed.length) return setNotice("Upload or paste contacts, then map the Name and Phone columns.");
-    if (!consentConfirmed) return setNotice("Confirm that these students agreed to receive WhatsApp messages.");
+    if (!consentConfirmed || importConsentSource.trim().length < 3) return setNotice("Confirm consent and enter how these students agreed to WhatsApp messages.");
     setBusy(true); setNotice(`Importing ${parsed.length} contacts…`);
     try {
-      const data = await readApi<{ total: number; created: number; matched: number; leadIds: string[]; group?: { id: string; name: string } | null }>(await fetch("/api/whatsapp/import", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contacts: parsed, consentConfirmed: true, consentSource: "Imported consented student list", ...(importGroupId ? { groupId: importGroupId } : {}) }) }));
-      await Promise.all([refreshInbox(), refreshMetadata()]); setChecked(data.leadIds || []); setShowImport(false);
-      setImportText(""); setImportSheets([]); setImportRows([]); setImportFileName(""); setImportFileError(""); setConsentConfirmed(true);
-      if (data.group?.id) setAudienceGroup(data.group.id);
-      setNotice(`${data.total} contacts saved, opted in and selected: ${data.created} new, ${data.matched} matched.${data.group ? ` Added to “${data.group.name}”.` : ""}`);
+      const leadIds: string[] = []; let created = 0; let matched = 0;
+      for (let index = 0; index < parsed.length; index += 500) {
+        const data = await readApi<{ total: number; created: number; matched: number; leadIds: string[] }>(await fetch("/api/whatsapp/import", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contacts: parsed.slice(index, index + 500), consentConfirmed: true, consentSource: importConsentSource.trim(), ...(importGroupId ? { groupId: importGroupId } : {}) }) }));
+        leadIds.push(...data.leadIds); created += data.created; matched += data.matched;
+        setNotice(`Importing: ${Math.min(index + 500, parsed.length)}/${parsed.length}`);
+      }
+      await Promise.all([refreshInbox(), refreshMetadata()]); setChecked([...new Set(leadIds)]); setShowImport(false);
+      setImportText(""); setImportSheets([]); setImportRows([]); setImportFileName(""); setImportFileError(""); setConsentConfirmed(false); setImportConsentSource("");
+      if (importGroupId) setAudienceGroups([importGroupId]);
+      setAudienceTags([]);
+      setNotice(`${leadIds.length} contacts saved and selected: ${created} new, ${matched} matched.${importGroupId ? " Added to the selected group." : ""} Previously opted-out contacts remain blocked from sending.`);
     } catch (error) { setNotice(error instanceof Error ? error.message : "Contacts could not be imported."); }
     finally { setBusy(false); }
   }
@@ -663,7 +698,7 @@ export default function WhatsAppView({ privileged, superAdmin = false }: { privi
       {showImport && <div className="wa-import wa-import-wizard">
         <header><span><strong>Import students from Excel or CSV</strong><small>Choose the sheet, header row, Name column and Phone column before saving.</small></span><button type="button" onClick={() => setShowImport(false)} aria-label="Close import"><X size={16}/></button></header>
         <div className="wa-import-source">
-          <label className="wa-file"><Upload size={20}/><span>{importFileName || "Upload Excel or CSV"}<small>.xlsx, .csv or tab-separated .txt · up to 1,000 contacts</small></span><input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.csv,text/csv,.txt,text/plain" onChange={(event) => void loadImportFile(event.target.files?.[0])}/></label>
+          <label className="wa-file"><Upload size={20}/><span>{importFileName || "Upload Excel or CSV"}<small>.xlsx, .csv or tab-separated .txt · up to 10,000 contacts</small></span><input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.csv,text/csv,.txt,text/plain" onChange={(event) => void loadImportFile(event.target.files?.[0])}/></label>
           <div className="wa-paste-import"><label>Or paste Name and Phone<textarea value={importText} onChange={(event) => setImportText(event.target.value)} placeholder={"Name, Phone\nAayush Shrestha, 9841280991\nSita Rai, 9800000000"}/></label><button type="button" onClick={usePastedImport}>Prepare pasted rows</button></div>
         </div>
         {importFileError && <div className="wa-import-error"><AlertCircle size={15}/>{importFileError}</div>}
@@ -676,22 +711,26 @@ export default function WhatsAppView({ privileged, superAdmin = false }: { privi
         </div>}
         {!!importRows.length && <div className="wa-import-preview">
           <div><span><strong>Review and edit</strong><small>{validImportRows.length} valid · {invalidImportCount} needs correction</small></span><em>Changes here are saved to CRM</em></div>
-          <div className="wa-import-table"><table><thead><tr><th>#</th><th>Student name</th><th>WhatsApp phone</th><th/></tr></thead><tbody>{importRows.map((row, index) => { const valid = row.name.trim().length >= 2 && row.phone.replace(/\D/g, "").length >= 10 && row.phone.replace(/\D/g, "").length <= 15; return <tr key={index} className={valid ? "" : "invalid"}><td>{index + 1}</td><td><input value={row.name} onChange={(event) => updateImportRow(index, "name", event.target.value)} aria-label={`Student name row ${index + 1}`}/></td><td><input value={row.phone} onChange={(event) => updateImportRow(index, "phone", event.target.value)} aria-label={`Phone row ${index + 1}`}/></td><td><button type="button" onClick={() => setImportRows((current) => current.filter((_, rowIndex) => rowIndex !== index))} aria-label={`Remove row ${index + 1}`}><Trash2 size={14}/></button></td></tr>; })}</tbody></table></div>
+          <div className="wa-import-table"><table><thead><tr><th>#</th><th>Student name</th><th>WhatsApp phone</th><th/></tr></thead><tbody>{importRows.slice(importPreviewPage * 100, (importPreviewPage + 1) * 100).map((row, pageIndex) => { const index = importPreviewPage * 100 + pageIndex; const valid = row.name.trim().length >= 2 && row.phone.replace(/\D/g, "").length >= 10 && row.phone.replace(/\D/g, "").length <= 15; return <tr key={index} className={valid ? "" : "invalid"}><td>{index + 1}</td><td><input value={row.name} onChange={(event) => updateImportRow(index, "name", event.target.value)} aria-label={`Student name row ${index + 1}`}/></td><td><input value={row.phone} onChange={(event) => updateImportRow(index, "phone", event.target.value)} aria-label={`Phone row ${index + 1}`}/></td><td><button type="button" onClick={() => setImportRows((current) => current.filter((_, rowIndex) => rowIndex !== index))} aria-label={`Remove row ${index + 1}`}><Trash2 size={14}/></button></td></tr>; })}</tbody></table></div>
+          {importRows.length > 100 && <div className="wa-import-pages"><button type="button" disabled={importPreviewPage === 0} onClick={() => setImportPreviewPage((page) => page - 1)}>Previous 100</button><span>Rows {importPreviewPage * 100 + 1}–{Math.min((importPreviewPage + 1) * 100, importRows.length)} of {importRows.length}</span><button type="button" disabled={(importPreviewPage + 1) * 100 >= importRows.length} onClick={() => setImportPreviewPage((page) => page + 1)}>Next 100</button></div>}
         </div>}
-        <label className="wa-consent"><input type="checkbox" checked={consentConfirmed} onChange={(event) => setConsentConfirmed(event.target.checked)}/><span><strong>Import as opted-in</strong> — I confirm every student in this file agreed to receive AIMS Global messages on WhatsApp.</span></label>
-        <footer><span>{validImportRows.length} contact{validImportRows.length === 1 ? "" : "s"} ready{invalidImportCount ? ` · ${invalidImportCount} invalid row(s) will be skipped` : ""}</span><button type="button" className="primary" disabled={busy || !consentConfirmed || !validImportRows.length} onClick={() => void importContacts()}>{busy ? "Importing…" : `Save ${validImportRows.length} and select for campaign`}</button></footer>
+        <label>Where did students agree to WhatsApp messages?<input value={importConsentSource} maxLength={120} onChange={(event) => setImportConsentSource(event.target.value)} placeholder="e.g. Admission enquiry form checkbox, 12 Nov 2026"/></label>
+        <label className="wa-consent"><input type="checkbox" checked={consentConfirmed} onChange={(event) => setConsentConfirmed(event.target.checked)}/><span><strong>Confirm consent for this entire file</strong> — I confirm every student in this file agreed to receive AIMS Global messages on WhatsApp. Previous opt-outs will remain blocked.</span></label>
+        <footer><span>{validImportRows.length} contact{validImportRows.length === 1 ? "" : "s"} ready{invalidImportCount ? ` · ${invalidImportCount} invalid row(s) will be skipped` : ""}</span><button type="button" className="primary" disabled={busy || !consentConfirmed || importConsentSource.trim().length < 3 || !validImportRows.length} onClick={() => void importContacts()}>{busy ? "Importing…" : `Save ${validImportRows.length} and select for campaign`}</button></footer>
       </div>}
       {templateError && <div className="wa-template-error" role="alert"><AlertCircle size={16}/><span>Approved templates could not load: {templateError}</span><button type="button" onClick={() => void refreshMetadata()}>Retry</button></div>}
       <div className="wa-campaign-grid">
         <div className="wa-audience">
-          <div className="wa-audience-tools"><label>Audience<select value={audienceGroup} onChange={(event) => { setAudienceGroup(event.target.value); setChecked([]); }}><option value="all">All CRM contacts</option>{groups.map((group) => <option key={group._id} value={group._id}>{group.name} · {group.memberCount}</option>)}</select></label><button type="button" onClick={() => selectAudience(filteredAudience.map((contact) => String(contact._id)))}><CheckCheck size={15}/> Select opted-in</button><button type="button" onClick={() => setChecked([])}>Clear</button></div>
+          <div className="wa-audience-tools"><details><summary>Groups {audienceGroups.length ? `(${audienceGroups.length})` : "(all)"}</summary><div className="wa-segment-options">{groups.map((group) => <label key={group._id}><input type="checkbox" checked={audienceGroups.includes(group._id)} onChange={() => toggleAudienceGroup(group._id)}/>{group.name} · {group.memberCount}</label>)}{!groups.length && <small>No groups yet</small>}</div></details><details><summary>Tags {audienceTags.length ? `(${audienceTags.length})` : "(all)"}</summary><div className="wa-segment-options">{availableTags.map((tag) => <label key={tag}><input type="checkbox" checked={audienceTags.includes(tag)} onChange={() => toggleAudienceTag(tag)}/>{tag}</label>)}{!availableTags.length && <small>No student tags yet</small>}</div></details><button type="button" onClick={() => selectAudience(filteredAudience.map((contact) => String(contact._id)))}><CheckCheck size={15}/> Select all matched ({filteredAudience.filter((contact) => !contact.whatsappOptOutAt).length})</button><button type="button" onClick={() => setChecked([])}>Clear</button></div>
+          <small>{filteredAudience.length} contacts match. Selected groups match any group; selected tags match any tag. Group and tag filters combine.</small>
           <label className="wa-search"><Search size={16}/><input value={audienceSearch} onChange={(event) => setAudienceSearch(event.target.value)} placeholder="Search this audience" aria-label="Filter campaign students"/></label>
-          <div>{filteredAudience.map((contact) => <label key={contact._id}><input type="checkbox" checked={checked.includes(String(contact._id))} onChange={() => toggle(String(contact._id))}/><span><strong>{contact.name}</strong><small>{contact.phone}</small></span><em className={contact.whatsappOptIn ? "yes" : "no"}>{contact.whatsappOptIn ? "Opted in" : "No consent"}</em></label>)}{!filteredAudience.length && <div className="empty compact">No contacts found in this audience.</div>}</div>
-          <footer><span>{checked.length} selected · {optedInSelected.length} sendable</span><button type="button" className="secondary" disabled={busy} onClick={() => void recordConsent(true)}>Record opt-in</button><button type="button" className="secondary" disabled={busy} onClick={() => void recordConsent(false)}>Opt out</button></footer>
+          <div>{filteredAudience.slice(0, 100).map((contact) => <label key={contact._id}><input type="checkbox" checked={checked.includes(String(contact._id))} onChange={() => toggle(String(contact._id))}/><span><strong>{contact.name}</strong><small>{contact.phone}</small></span><em className={contact.whatsappOptIn && !contact.whatsappOptOutAt ? "yes" : "no"}>{contact.whatsappOptOutAt ? "Opted out" : contact.whatsappOptIn ? "Opted in" : "No consent"}</em></label>)}{!filteredAudience.length && <div className="empty compact">No contacts found in this audience.</div>}{filteredAudience.length > 100 && <small>Showing first 100 for speed. “Select all matched” includes all {filteredAudience.length} matching contacts.</small>}</div>
+          <div className="wa-bulk-consent"><label>Consent source for selected contacts<input value={audienceConsentSource} maxLength={120} onChange={(event) => setAudienceConsentSource(event.target.value)} placeholder="e.g. Admission enquiry form checkbox"/></label><label><input type="checkbox" checked={audienceConsentConfirmed} onChange={(event) => setAudienceConsentConfirmed(event.target.checked)}/> I confirm these students agreed to receive AIMS Global WhatsApp messages.</label></div>
+          <footer><span>{checked.length} selected · {optedInSelected.length} sendable</span><button type="button" className="secondary" disabled={busy || !audienceConsentConfirmed || audienceConsentSource.trim().length < 3} onClick={() => void recordConsent(true)}>Record verified consent in bulk</button><button type="button" className="secondary" disabled={busy} onClick={() => void recordConsent(false)}>Opt out</button></footer>
         </div>
-        <form className="wa-campaign-form" onSubmit={createCampaign}><label>Campaign name<input required name="name" placeholder="WhatsApp test campaign"/></label><label>Approved Meta template<select required value={selectedTemplate} onChange={(event) => setSelectedTemplate(event.target.value)}><option value="">Select approved template</option>{templates.map((template) => <option key={`${template.name}-${template.language}`} value={template.name}>{template.name} · {template.category} · {template.language}</option>)}</select></label>{campaignTemplate?.headerImageUrl && <Image src={campaignTemplate.headerImageUrl} alt="Campaign banner" width={600} height={338} unoptimized />}{campaignTemplate?.body && <p className="wa-template-preview">{campaignTemplate.body}</p>}{Array.from({ length: Math.max(0, (campaignTemplate?.parameterCount || 0) - 1) }, (_, index) => <label key={index}>Template value {index + 2}<input required name={`parameter${index + 2}`} placeholder={`Value for {{${index + 2}}}`}/></label>)}{(campaignTemplate?.parameterCount || 0) > 0 && <small>Variable {"{{1}}"} uses each selected student&apos;s CRM name automatically.</small>}<div className="wa-estimate"><strong>{optedInSelected.length} recipients selected</strong><span>Estimated Meta marketing fee: ≈ NPR {(optedInSelected.length * 13.87).toLocaleString("en-NP", { maximumFractionDigits: 0 })}</span><small>Estimate only; Meta bills by recipient country and delivered message.</small></div><div className="wa-send-dock"><span><strong>{optedInSelected.length} ready to send</strong><small>{campaignBlockedReason}</small></span><button className="primary" disabled={busy || !configured || !optedInSelected.length || !selectedTemplate}><Send size={16}/>{busy ? "Sending…" : "Send campaign"}</button></div></form>
+        <form className="wa-campaign-form" onSubmit={createCampaign}><label>Campaign name<input required name="name" placeholder="WhatsApp test campaign"/></label><label>Approved Meta template<select required value={selectedTemplate} onChange={(event) => setSelectedTemplate(event.target.value)}><option value="">Select approved template</option>{templates.map((template) => <option key={`${template.name}-${template.language}`} value={template.name}>{template.name} · {template.category} · {template.language}</option>)}</select></label>{campaignTemplate?.headerImageUrl && <Image src={campaignTemplate.headerImageUrl} alt="Campaign banner" width={600} height={338} unoptimized />}{campaignTemplate?.body && <p className="wa-template-preview">{campaignTemplate.body}</p>}{Array.from({ length: Math.max(0, (campaignTemplate?.parameterCount || 0) - 1) }, (_, index) => <label key={index}>Template value {index + 2}<input required name={`parameter${index + 2}`} placeholder={`Value for {{${index + 2}}}`}/></label>)}{(campaignTemplate?.parameterCount || 0) > 0 && <small>Variable {"{{1}}"} uses each selected student&apos;s CRM name automatically.</small>}<div className="wa-estimate"><strong>{optedInSelected.length} recipients selected</strong><small>Meta messaging charges depend on template category and recipient country. Review your Meta billing before sending.</small></div><div className="wa-send-dock"><span><strong>{optedInSelected.length} ready to send</strong><small>{campaignBlockedReason}</small></span><button className="primary" disabled={busy || !configured || !optedInSelected.length || !selectedTemplate}><Send size={16}/>{busy ? "Sending…" : "Send campaign"}</button></div></form>
       </div>
-      {!!campaigns.length && <div className="wa-campaign-history"><h3>Recent campaigns</h3>{campaigns.map((campaign) => <div key={campaign._id}><span><strong>{campaign.name}</strong><small>{timeLabel(campaign.createdAt, true)}{campaign.lastDeliveryError ? ` · ${campaign.lastDeliveryError}` : ""}</small></span><b>{campaign.status}</b><em>{campaign.accepted ?? campaign.sent}/{campaign.total} Meta accepted · {campaign.delivered ?? 0} delivered · {(campaign.deliveryFailed ?? 0) + campaign.failed} failed</em></div>)}</div>}
+      {!!campaigns.length && <div className="wa-campaign-history"><h3>Recent campaigns</h3>{campaigns.map((campaign) => <div key={campaign._id}><span><strong>{campaign.name}</strong><small>{timeLabel(campaign.createdAt, true)}{campaign.lastDeliveryError ? ` · ${campaign.lastDeliveryError}` : ""}</small></span><b>{campaign.status}</b><em>{campaign.accepted ?? campaign.sent}/{campaign.total} Meta accepted · {campaign.delivered ?? 0} delivered · {(campaign.deliveryFailed ?? 0) + campaign.failed} failed</em>{campaign.status !== "completed" && <button type="button" className="secondary" disabled={busy} onClick={() => void resumeCampaign(campaign._id)}>Resume sending</button>}</div>)}</div>}
     </section>}
   </div>;
 }

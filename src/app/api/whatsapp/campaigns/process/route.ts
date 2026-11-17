@@ -13,9 +13,18 @@ export async function POST(request: NextRequest) {
   if (!isPrivileged(session.role)) return NextResponse.json({ error: "Not authorized" }, { status: 403 });
   if (!requireSameOrigin(request)) return NextResponse.json({ error: "Invalid request origin" }, { status: 403 });
   const parsed = schema.safeParse(await request.json()); if (!parsed.success) return NextResponse.json({ error: "Invalid campaign" }, { status: 400 });
-  await connectMongo(); const campaign = await WhatsAppCampaign.findById(parsed.data.campaignId);
-  if (!campaign) return NextResponse.json({ error: "Campaign not found" }, { status: 404 });
-  if (campaign.status === "completed") return NextResponse.json({ done: true, sent: campaign.sent, failed: campaign.failed, total: campaign.total });
+  await connectMongo();
+  const campaign = await WhatsAppCampaign.findOneAndUpdate(
+    { _id: parsed.data.campaignId, status: { $ne: "completed" }, $or: [{ processingLeaseUntil: null }, { processingLeaseUntil: { $lt: new Date() } }] },
+    { $set: { processingLeaseUntil: new Date(Date.now() + 180_000) } },
+    { new: true },
+  );
+  if (!campaign) {
+    const current = await WhatsAppCampaign.findById(parsed.data.campaignId).select("status sent failed total processingLeaseUntil");
+    if (!current) return NextResponse.json({ error: "Campaign not found" }, { status: 404 });
+    if (current.status === "completed") return NextResponse.json({ done: true, sent: current.sent, failed: current.failed, total: current.total });
+    return NextResponse.json({ error: "Another send batch is running. Wait a moment and resume." }, { status: 409 });
+  }
   campaign.status = "processing";
   const pending = campaign.recipients.filter((item: { status: string }) => item.status === "pending").slice(0, 10);
   await Promise.all(pending.map(async (recipient: { leadId: unknown; name: string; phone: string; status: string; messageId?: string; error?: string }) => {
@@ -53,6 +62,7 @@ export async function POST(request: NextRequest) {
   }));
   const remaining = campaign.recipients.some((item: { status: string }) => item.status === "pending");
   if (!remaining) { campaign.status = "completed"; campaign.completedAt = new Date(); }
+  campaign.processingLeaseUntil = undefined;
   await campaign.save();
   return NextResponse.json({ done: !remaining, sent: campaign.sent, failed: campaign.failed, total: campaign.total });
 }

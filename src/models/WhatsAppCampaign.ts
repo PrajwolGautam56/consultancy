@@ -24,6 +24,7 @@ const whatsAppCampaignSchema = new Schema({
   createdBy: { type: Schema.Types.ObjectId, ref: "User", required: true },
   createdByName: { type: String, required: true, maxlength: 120 },
   completedAt: Date,
+  processingLeaseUntil: Date,
 }, { timestamps: true });
 
 export const WhatsAppCampaign = models.WhatsAppCampaign || model("WhatsAppCampaign", whatsAppCampaignSchema);

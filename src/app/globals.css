@@ -115,3 +115,24 @@
 @media(max-width:850px){.meta-title-row{align-items:flex-start;flex-direction:column}.meta-title-actions{width:100%;flex-wrap:wrap}.meta-inbox-shell{grid-template-columns:300px minmax(500px,1fr);overflow:auto}}
 @media(max-width:650px){.meta-title-actions button{flex:1;justify-content:center}.meta-inbox-shell{display:block;height:calc(100dvh - 235px);min-height:520px;overflow:hidden}.meta-conversations{height:100%;border-right:0}.meta-thread{height:100%}.meta-inbox-shell:has(.meta-thread>header) .meta-conversations{display:none}.meta-message-list article{max-width:88%}.meta-account-strip{grid-template-columns:1fr}.meta-search input,.meta-account-filter,.meta-reply textarea{font-size:16px}}
 .meta-back{display:none;border:0;background:transparent;color:var(--muted);padding:5px}@media(max-width:650px){.meta-back{display:grid;place-items:center}}
+
+/* Bulk WhatsApp audience and large-import controls */
+.wa-audience-tools{grid-template-columns:minmax(100px,1fr) minmax(100px,1fr) auto auto!important;align-items:end}
+.wa-audience-tools details{position:relative;min-width:0}
+.wa-audience-tools summary{list-style:none;cursor:pointer;display:flex;align-items:center;min-height:39px;padding:0 11px;border:1px solid #d3e3da;border-radius:9px;background:#fff;color:#27734e;font-size:10px;font-weight:800}
+.wa-audience-tools summary::-webkit-details-marker{display:none}
+.wa-segment-options{position:absolute;z-index:20;top:43px;left:0;width:min(300px,80vw);max-height:270px;overflow:auto;padding:6px;background:#fff;border:1px solid #d3e3da;border-radius:10px;box-shadow:0 12px 28px #173b2626}
+.wa-segment-options label{display:flex!important;align-items:center;gap:8px;padding:9px!important;min-height:34px!important;border:0!important;font-size:10px!important;font-weight:600!important}
+.wa-segment-options input{flex:0 0 auto}
+.wa-segment-options small{display:block;padding:9px;color:var(--muted)}
+.wa-bulk-consent{padding:10px 13px;border-top:1px solid var(--line);background:#f8fbf9}
+.wa-bulk-consent label{display:flex!important;min-height:0!important;align-items:center!important;gap:8px!important;border:0!important;padding:6px 0!important;font-size:10px}
+.wa-bulk-consent label:first-child{flex-direction:column;align-items:stretch!important;font-weight:700}
+.wa-bulk-consent input[type=text],.wa-bulk-consent input:not([type]){height:38px;border:1px solid #d3e3da;border-radius:8px;padding:0 10px}
+.wa-import-wizard>label:not(.wa-consent){display:block;margin:0 15px 12px;font-size:10px;font-weight:800;color:#536176}
+.wa-import-wizard>label:not(.wa-consent) input{display:block;width:100%;height:40px;margin-top:6px;padding:0 11px;border:1px solid #d8e4dd;border-radius:8px;font-size:11px}
+.wa-import-pages{display:flex!important;align-items:center;justify-content:space-between;gap:8px;padding:8px 0!important;font-size:9px;color:var(--muted)}
+.wa-import-pages button{border:1px solid #d3e3da;background:#fff;border-radius:7px;padding:7px 10px;color:#27734e;font-size:9px;font-weight:800}
+.wa-import-pages button:disabled{opacity:.45}
+@media(max-width:850px){.wa-audience-tools{grid-template-columns:repeat(2,minmax(0,1fr))!important}.wa-audience-tools button{justify-content:center}}
+@media(max-width:650px){.wa-audience-tools button{min-height:44px;height:auto;white-space:normal}.wa-bulk-consent input:not([type]){font-size:16px}.wa-import-wizard>label:not(.wa-consent) input{font-size:16px}}

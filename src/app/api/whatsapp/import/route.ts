@@ -7,7 +7,7 @@ import { Lead } from "@/models/Lead";
 import { WhatsAppGroup } from "@/models/WhatsAppGroup";
 
 const schema = z.object({
-  contacts: z.array(z.object({ name: z.string().trim().min(2).max(120), phone: z.string().trim().min(7).max(24) }).strict()).min(1).max(1000),
+  contacts: z.array(z.object({ name: z.string().trim().min(2).max(120), phone: z.string().trim().min(7).max(24) }).strict()).min(1).max(500),
   consentConfirmed: z.literal(true),
   consentSource: z.string().trim().min(3).max(120),
   groupId: z.string().regex(/^[a-f\d]{24}$/i).optional(),
@@ -36,9 +36,10 @@ export async function POST(request: NextRequest) {
     const batch = contacts.slice(index, index + 20);
     const results = await Promise.all(batch.map(async (contact) => {
       const local = contact.phone.startsWith("977") ? contact.phone.slice(3) : contact.phone;
-      const existing = await Lead.findOne({ phone: { $in: [contact.phone, `+${contact.phone}`, local, `0${local}`] }, archivedAt: null }).select("_id");
+      const existing = await Lead.findOne({ phone: { $in: [contact.phone, `+${contact.phone}`, local, `0${local}`] }, archivedAt: null }).select("_id whatsappOptOutAt");
       if (existing) {
-        await Lead.updateOne({ _id: existing._id }, { $set: { whatsappOptIn: true, whatsappOptInAt: now, whatsappOptInSource: parsed.data.consentSource, whatsappOptOutAt: null } });
+        // A prior opt-out must never be silently reversed by a spreadsheet import.
+        if (!existing.whatsappOptOutAt) await Lead.updateOne({ _id: existing._id }, { $set: { whatsappOptIn: true, whatsappOptInAt: now, whatsappOptInSource: parsed.data.consentSource } });
         return { id: String(existing._id), created: false };
       }
       try {
